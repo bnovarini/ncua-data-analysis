@@ -58,6 +58,23 @@ Things to know before using it:
 - Years before 2018 (the download links use two other naming patterns).
 - A static analytics site and natural-language querying. The dictionary is built to be the semantic layer for that.
 
+## MCP server (v1)
+
+A local MCP server lets an AI assistant query this dataset in plain language. It runs over stdio, reads the release Parquet files with DuckDB (downloaded once to `~/.cache/ncua-data-analysis`), and builds its tool descriptions from the dictionary table.
+
+```json
+{
+  "mcpServers": {
+    "ncua-data": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/bnovarini/ncua-data-analysis", "ncua-data-mcp"]
+    }
+  }
+}
+```
+
+Tools: `list_fields`, `find_credit_union`, `credit_union_profile`, `metric_series` (one credit union or an aggregate across all), `peer_compare` (by asset group, state or charter), and `query_metrics` (filters, ordering and limits; no raw SQL). Set `NCUA_DATA_DIR` to use a folder of already-downloaded files. Status: first working version, tested over stdio with a real MCP client; not yet listed in the MCP registry.
+
 ## Download
 
 Ready-made Parquet files are attached to the [v0.1 release](https://github.com/bnovarini/ncua-data-analysis/releases/tag/v0.1). GitHub caps release files at 25 MB, so `fact_call_report_curated` and `metrics` come in three parts by year (2018-2020, 2021-2023, 2024-2026) with identical columns:
@@ -73,4 +90,4 @@ duckdb.sql(f"SELECT quarter, count(*) FROM read_parquet({parts}) GROUP BY 1 ORDE
 
 Data: National Credit Union Administration, 5300 Call Report Quarterly Data. NCUA does not state a license on the download page. As a US federal agency's work it is assumed to be public domain, but that assumption has not been confirmed. Credit NCUA when you use it.
 
-Code: no license has been chosen yet, so default copyright applies.
+Code: MIT, see LICENSE.
