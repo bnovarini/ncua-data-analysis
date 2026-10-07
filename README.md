@@ -62,4 +62,4 @@ Things to know before using it:
 
 Data: National Credit Union Administration, 5300 Call Report Quarterly Data. NCUA does not state a license on the download page. As a US federal agency's work it is assumed to be public domain, but that assumption has not been confirmed. Credit NCUA when you use it.
 
-Code: MIT, see LICENSE.
+Code: no license has been chosen yet, so default copyright applies.
