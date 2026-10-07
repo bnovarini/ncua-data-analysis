@@ -7,6 +7,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import threading
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Optional
@@ -23,6 +26,7 @@ FILES = [
 ]
 DICT_PATH = Path(__file__).parent / "mcp_data" / "dictionary.json"
 MAX_ROWS = 200
+QUERY_TIMEOUT_S = float(os.environ.get("NCUA_QUERY_TIMEOUT", "15"))
 KEYS = ("quarter", "cu_number")
 
 
@@ -74,6 +78,8 @@ def con() -> duckdb.DuckDBPyConnection:
     if _con is None:
         d = ensure_files()
         c = duckdb.connect()
+        c.execute(f"SET memory_limit='{os.environ.get('NCUA_MEMORY_LIMIT', '1GB')}'")
+        c.execute(f"SET threads={int(os.environ.get('NCUA_THREADS', '2'))}")
         g = lambda p: str(d / p)
         c.execute(f"CREATE VIEW dim AS SELECT * FROM read_parquet('{g('dim_credit_union.parquet')}')")
         c.execute(f"CREATE VIEW fact AS SELECT * FROM read_parquet('{g('fact_call_report_curated_*.parquet')}')")
@@ -87,10 +93,19 @@ def con() -> duckdb.DuckDBPyConnection:
 
 
 def run(sql: str, params: list[Any] | None = None) -> list[dict]:
-    cur = con().execute(sql, params or [])
+    cur = con().cursor()
+    timer = threading.Timer(QUERY_TIMEOUT_S, cur.interrupt)
+    timer.start()
+    try:
+        cur.execute(sql, params or [])
+        rows = cur.fetchall()
+    except duckdb.InterruptException:
+        raise RuntimeError(f"Query took longer than {QUERY_TIMEOUT_S:.0f}s and was stopped. Narrow the filters or quarter range.")
+    finally:
+        timer.cancel()
     cols = [x[0] for x in cur.description]
     out = []
-    for row in cur.fetchall():
+    for row in rows:
         out.append({k: (round(v, 6) if isinstance(v, float) else v) for k, v in zip(cols, row)})
     return out
 
@@ -328,11 +343,60 @@ def query_metrics(
     return run(f"SELECT {sel} FROM cu WHERE {' AND '.join(where)} {order} LIMIT {max(1, min(limit, MAX_ROWS))}", p)
 
 
+class RateLimit:
+    """Per-client sliding-window limit for the hosted endpoint. Pure ASGI, so it stays in front of the MCP app."""
+
+    def __init__(self, app, per_minute: int):
+        self.app, self.per_minute, self.hits = app, per_minute, {}
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and scope["path"] != "/healthz":
+            h = dict(scope["headers"])
+            ip = (h.get(b"fly-client-ip") or h.get(b"x-forwarded-for", b"").split(b",")[0] or b"?").decode().strip()
+            now = time.time()
+            q_ = [t for t in self.hits.get(ip, []) if now - t < 60]
+            if len(q_) >= self.per_minute:
+                body = b'{"error":"rate limit exceeded, try again in a minute"}'
+                await send({"type": "http.response.start", "status": 429,
+                            "headers": [(b"content-type", b"application/json"), (b"retry-after", b"30")]})
+                await send({"type": "http.response.body", "body": body})
+                return
+            q_.append(now)
+            self.hits[ip] = q_
+            if len(self.hits) > 5000:
+                self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 60}
+        await self.app(scope, receive, send)
+
+
+def http_app():
+    """ASGI app for the hosted, stateless streamable-HTTP endpoint at /mcp."""
+    from mcp.server.transport_security import TransportSecuritySettings
+    from starlette.responses import JSONResponse
+
+    hosts = [h for h in os.environ.get("NCUA_ALLOWED_HOSTS", "").split(",") if h]
+    mcp.settings.stateless_http = True
+    mcp.settings.json_response = True
+    mcp.settings.transport_security = TransportSecuritySettings(
+        enable_dns_rebinding_protection=bool(hosts), allowed_hosts=hosts, allowed_origins=["*"] if hosts else [])
+
+    @mcp.custom_route("/healthz", methods=["GET"])
+    async def healthz(request):
+        return JSONResponse({"ok": True, "latest_quarter": latest_quarter()})
+
+    return RateLimit(mcp.streamable_http_app(), int(os.environ.get("NCUA_RATE_PER_MIN", "60")))
+
+
 def main() -> None:
-    if "--check" in os.sys.argv:
+    argv = sys.argv[1:]
+    if "--check" in argv:
         print(f"{len(METRIC_NAMES)} metrics, {len(FACT_NAMES)} fact fields, data dir {data_dir()}")
         ensure_files()
         print("latest quarter", latest_quarter())
+        return
+    if "--http" in argv:
+        import uvicorn
+        uvicorn.run(http_app(), host=os.environ.get("HOST", "0.0.0.0"), port=int(os.environ.get("PORT", "8080")),
+                    log_level="warning", timeout_keep_alive=5)
         return
     mcp.run()
 
