@@ -58,6 +58,17 @@ Things to know before using it:
 - Years before 2018 (the download links use two other naming patterns).
 - A static analytics site and natural-language querying. The dictionary is built to be the semantic layer for that.
 
+## Download
+
+Ready-made Parquet files are attached to the [v0.1 release](https://github.com/bnovarini/ncua-data-analysis/releases/tag/v0.1). GitHub caps release files at 25 MB, so `fact_call_report_curated` and `metrics` come in three parts by year (2018-2020, 2021-2023, 2024-2026) with identical columns:
+
+```python
+import duckdb
+base = "https://github.com/bnovarini/ncua-data-analysis/releases/download/v0.1/"
+parts = [base + f"metrics_{y}.parquet" for y in ("2018_2020", "2021_2023", "2024_2026")]
+duckdb.sql(f"SELECT quarter, count(*) FROM read_parquet({parts}) GROUP BY 1 ORDER BY 1").show()
+```
+
 ## Data source and license
 
 Data: National Credit Union Administration, 5300 Call Report Quarterly Data. NCUA does not state a license on the download page. As a US federal agency's work it is assumed to be public domain, but that assumption has not been confirmed. Credit NCUA when you use it.
