@@ -3,10 +3,11 @@ name = "ncua-data-analysis"
 version = "0.1.0"
 description = "Clean, documented NCUA call report data for credit union analysis: lending, deposits and operations"
 requires-python = ">=3.10"
-dependencies = ["duckdb>=1.0"]
+dependencies = ["duckdb>=1.0", "mcp>=1.2,<2"]
 
 [project.scripts]
 ncua-data = "ncua_data.cli:main"
+ncua-data-mcp = "ncua_data.mcp_server:main"
 
 [build-system]
 requires = ["setuptools>=61"]
@@ -14,3 +15,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+ncua_data = ["mcp_data/*.json"]
