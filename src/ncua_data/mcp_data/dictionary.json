@@ -1,0 +1,1297 @@
+[
+{
+"table_name": "dim_credit_union",
+"column_name": "charter_state",
+"description": "State of charter (state-chartered only).",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "charter_type",
+"description": "federal, state_federally_insured, or state_not_federally_insured.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "city",
+"description": "Mailing city.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "county_code",
+"description": "County code.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "cu_number",
+"description": "NCUA charter number. Stable for a credit union over time; disappears when it merges or closes.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "field_of_membership_code",
+"description": "Type-of-membership code.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "is_federally_insured",
+"description": "False for the ~85 state-chartered credit unions NCUA does not insure. NCUA's published totals exclude them.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "is_low_income",
+"description": "Low-income designation.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "is_minority_depository",
+"description": "Minority depository institution flag.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "name",
+"description": "Credit union name.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "ncua_region",
+"description": "NCUA region code.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "peer_group",
+"description": "NCUA asset peer group 1-6.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "peer_group_label",
+"description": "Peer group asset range.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "quarter",
+"description": "Report quarter, YYYY-MM of the quarter end (03, 06, 09, 12).",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "rssd",
+"description": "Federal Reserve RSSD identifier.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "state",
+"description": "Mailing state.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "year_opened",
+"description": "Year the credit union was organized.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "dim_credit_union",
+"column_name": "zip_code",
+"description": "Mailing ZIP.",
+"kind": "attribute",
+"category": null
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "accounts_certificates",
+"description": "Number of share certificate accounts.",
+"kind": "count",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "accounts_ira_keogh",
+"description": "Number of IRA and Keogh accounts.",
+"kind": "count",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "accounts_money_market",
+"description": "Number of money market accounts.",
+"kind": "count",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "accounts_non_member",
+"description": "Number of non-member deposit accounts.",
+"kind": "count",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "accounts_share_drafts",
+"description": "Number of share draft accounts.",
+"kind": "count",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "accrued_interest_on_loans",
+"description": "Interest earned on loans but not yet received.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "allowance_for_credit_losses",
+"description": "Allowance for loan and lease losses. Reported as Acct_719 before CECL and as Acct_AS0048 after.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "borrowings_repurchase",
+"description": "Borrowings through repurchase transactions.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "branches",
+"description": "Number of branches, counting the main office when it serves members.",
+"kind": "count",
+"category": "operations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "brokered_certificates",
+"description": "Brokered certificates of deposit.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "cash_on_deposit",
+"description": "Cash deposited at other financial institutions, including corporate credit unions and the Federal Reserve.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "cash_on_hand",
+"description": "Coin and currency held.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "cecl_transition_provision",
+"description": "CECL transition provision included in net worth. NCUA's published net worth ratio excludes it. Available from 2023.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "chargeoffs_credit_card_ytd",
+"description": "Credit card charge-offs year to date.",
+"kind": "ytd",
+"category": "credit_losses"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "chargeoffs_indirect_ytd",
+"description": "Indirect loan charge-offs year to date.",
+"kind": "ytd",
+"category": "credit_losses"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "chargeoffs_other_unsecured_ytd",
+"description": "Other unsecured charge-offs year to date. Available from 2022 only.",
+"kind": "ytd",
+"category": "credit_losses"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "chargeoffs_used_vehicle_ytd",
+"description": "Used vehicle charge-offs year to date.",
+"kind": "ytd",
+"category": "credit_losses"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "chargeoffs_ytd",
+"description": "Total loans charged off year to date.",
+"kind": "ytd",
+"category": "credit_losses"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "commercial_share_accounts",
+"description": "Share accounts held by business members.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "consumer_loans_nonaccrual",
+"description": "Consumer loans in non-accrual status. Available from 2022 only.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_12m_plus",
+"description": "All loans and leases delinquent 12 months or more.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_1_to_2m",
+"description": "All loans and leases delinquent 1 to under 2 months.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_2_to_6m",
+"description": "All loans and leases delinquent 2 to under 6 months.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_2m_plus",
+"description": "Total delinquent loans and leases, two or more months. The headline NCUA delinquency figure.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_6_to_12m",
+"description": "All loans and leases delinquent 6 to under 12 months.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_credit_card",
+"description": "Delinquent unsecured credit card loans.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_first_lien_residential",
+"description": "Reportable delinquent first-lien 1-4 family loans. Available from 2022 only.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_indirect",
+"description": "Delinquent indirect loans.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_junior_lien_residential",
+"description": "Reportable delinquent junior-lien 1-4 family loans. Available from 2022 only.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_new_vehicle",
+"description": "Reportable delinquent new vehicle loans.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_student",
+"description": "Delinquent student loans.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "delinquent_used_vehicle",
+"description": "Reportable delinquent used vehicle loans.",
+"kind": "stock",
+"category": "delinquency"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "deposits_non_member",
+"description": "Deposits from non-members (for example government and other credit unions).",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "dividends_on_shares_ytd",
+"description": "Dividends paid on shares, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "employee_compensation_ytd",
+"description": "Employee compensation and benefits, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "employees_full_time",
+"description": "Full-time employees (26 or more hours a week).",
+"kind": "count",
+"category": "operations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "employees_part_time",
+"description": "Part-time employees (25 hours or less a week).",
+"kind": "count",
+"category": "operations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "equity_acquired_in_merger",
+"description": "Equity acquired through mergers.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "fee_income_ytd",
+"description": "Fee income, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "goodwill",
+"description": "Goodwill from acquisitions.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "insured_shares",
+"description": "Shares and deposits covered by NCUA insurance.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "interest_expense_ytd",
+"description": "Total interest expense (dividends, deposit interest and borrowing interest), year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "interest_income_ytd",
+"description": "Total interest income, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "interest_on_borrowings_ytd",
+"description": "Interest on borrowed money, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "interest_on_deposits_ytd",
+"description": "Interest on deposits, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "interest_on_loans_ytd",
+"description": "Interest on loans before refunds, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "interest_refunded_ytd",
+"description": "Interest refunded to borrowers, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "investment_income_ytd",
+"description": "Income from investments, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "land_and_building",
+"description": "Land and buildings, net.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "leases_receivable",
+"description": "Leases receivable.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loan_servicing_expense_ytd",
+"description": "Loan servicing expense, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_agricultural_commercial",
+"description": "Agricultural commercial loans.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_and_leases_count",
+"description": "Number of loans and leases outstanding.",
+"kind": "count",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_and_leases_total",
+"description": "Total loans and leases outstanding.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_commercial_member",
+"description": "Commercial loans to members.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_commercial_nonmember",
+"description": "Commercial loans purchased or participated from non-members.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_commercial_not_re",
+"description": "Commercial loans not secured by real estate.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_commercial_real_estate",
+"description": "Commercial loans and lines that are real estate secured.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_commercial_total",
+"description": "All member and non-member commercial loans.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_construction_member",
+"description": "Member construction and development loans.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_credit_card",
+"description": "Unsecured credit card loans.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_first_lien_residential",
+"description": "Loans and lines secured by a first lien on 1-4 family residential property.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_granted_count_ytd",
+"description": "Number of loans granted year to date.",
+"kind": "ytd",
+"category": "originations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_granted_ytd",
+"description": "Dollar amount of loans granted year to date.",
+"kind": "ytd",
+"category": "originations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_held_for_sale",
+"description": "Loans the credit union intends to sell.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_indirect_total",
+"description": "Indirect loans (originated through dealers or third parties).",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_interest_only_first_mortgage",
+"description": "Interest-only and payment-option first mortgages.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_junior_lien_residential",
+"description": "Loans and lines secured by a junior lien on 1-4 family residential property (mostly HELOCs).",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_member_business_net",
+"description": "Net member business loan balance (regulatory definition).",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_new_vehicle",
+"description": "New vehicle loans.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_other_real_estate",
+"description": "Other real estate loans and lines of credit.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_other_secured_non_re",
+"description": "All other secured loans that are not real estate.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_other_unsecured",
+"description": "All other unsecured loans and lines of credit.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_payday_alternative",
+"description": "Payday alternative loans (PAL), federal credit unions only.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_student",
+"description": "Non-federally guaranteed student loans.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_troubled_debt_restructured",
+"description": "Loans classed as troubled debt restructurings.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "loans_used_vehicle",
+"description": "Used vehicle loans.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "members",
+"description": "Current members (people, not accounts).",
+"kind": "count",
+"category": "membership"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "ncua_insurance_deposit",
+"description": "Capitalization deposit held at the NCUA share insurance fund.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "net_income_ytd",
+"description": "Net income, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "net_worth",
+"description": "Total net worth (regulatory capital).",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "net_worth_ratio_pct_x100",
+"description": "Net worth ratio as reported, in hundredths of a percent (1455 = 14.55%).",
+"kind": "pct",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "non_interest_expense_ytd",
+"description": "Total non-interest expense, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "non_interest_income_ytd",
+"description": "Total non-interest income, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "occupancy_expense_ytd",
+"description": "Office occupancy expense, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "operations_expense_ytd",
+"description": "Office operations expense, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "other_fixed_assets",
+"description": "Other fixed assets, net.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "other_reserves",
+"description": "Other reserves appropriated from undivided earnings.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "participations_purchased_ytd",
+"description": "Participation loans purchased year to date.",
+"kind": "ytd",
+"category": "originations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "participations_sold_ytd",
+"description": "Participation loans sold year to date.",
+"kind": "ytd",
+"category": "originations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "potential_members",
+"description": "Potential members within the field of membership.",
+"kind": "count",
+"category": "membership"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "professional_services_expense_ytd",
+"description": "Professional and outside services expense, year to date.",
+"kind": "ytd",
+"category": "income_statement"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "provision_for_loan_losses_ytd",
+"description": "Provision (pre-CECL) or credit loss expense (CECL) on loans, year to date.",
+"kind": "ytd",
+"category": "credit_losses"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "real_estate_loans_sold_serviced",
+"description": "Real estate loans sold but still serviced by the credit union.",
+"kind": "stock",
+"category": "loan_portfolio"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "recoveries_ytd",
+"description": "Total recoveries on charged-off loans year to date.",
+"kind": "ytd",
+"category": "credit_losses"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_1_to_3yr",
+"description": "Shares maturing in one to three years.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_certificates",
+"description": "Share certificates, all maturities.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_certificates_1_to_3yr",
+"description": "Share certificates maturing in one to three years.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_certificates_over_3yr",
+"description": "Share certificates maturing in more than three years.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_certificates_under_1yr",
+"description": "Share certificates maturing in under one year.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_ira_keogh",
+"description": "IRA and Keogh retirement accounts.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_money_market",
+"description": "Money market shares.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_other",
+"description": "All other share accounts.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_over_3yr",
+"description": "Shares maturing in more than three years.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_regular",
+"description": "Regular share (savings) accounts.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_share_drafts",
+"description": "Share draft (checking) accounts.",
+"kind": "stock",
+"category": "account_composition"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "shares_under_1yr",
+"description": "Shares maturing in under one year, including share drafts and regular shares.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "total_assets",
+"description": "Total assets, in dollars.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "total_liabilities_shares_equity",
+"description": "Total liabilities, shares and equity. Equals total assets.",
+"kind": "stock",
+"category": "balance_sheet"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "total_shares",
+"description": "Total member shares.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "total_shares_and_deposits",
+"description": "Total shares and deposits, including non-member deposits.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "unfunded_commercial",
+"description": "Unfunded commercial loan commitments.",
+"kind": "stock",
+"category": "originations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "unfunded_credit_card_lines",
+"description": "Unfunded credit card commitments.",
+"kind": "stock",
+"category": "originations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "unfunded_revolving_real_estate",
+"description": "Unfunded revolving open-end real estate commitments.",
+"kind": "stock",
+"category": "originations"
+},
+{
+"table_name": "fact_call_report_curated",
+"column_name": "uninsured_shares",
+"description": "Shares and deposits above the insurance limit.",
+"kind": "stock",
+"category": "shares_capital"
+},
+{
+"table_name": "metrics",
+"column_name": "allowance_to_loans",
+"description": "Allowance for credit losses divided by total loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "asset_growth_yoy",
+"description": "Total assets versus the same quarter one year earlier.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "assets_per_branch",
+"description": "Assets per branch.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "assets_per_fte",
+"description": "Assets per estimated full-time-equivalent employee.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "auto_delinquency_rate",
+"description": "Reportable delinquent vehicle loans divided by vehicle loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "auto_loan_growth_yoy",
+"description": "New plus used vehicle loans versus one year earlier.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "avg_balance_per_listed_account",
+"description": "Total shares and deposits over the count of share draft, certificate, money market, IRA and non-member accounts. Rough; regular share account counts are not collected.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "compensation_per_fte",
+"description": "Annualized employee compensation and benefits per estimated FTE.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "compensation_share_of_opex",
+"description": "Employee compensation and benefits as a share of non-interest expense.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "cost_of_shares",
+"description": "Total interest expense annualized over shares and deposits.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "credit_card_delinquency_rate",
+"description": "Delinquent credit card loans divided by credit card loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "delinquency_rate",
+"description": "Loans delinquent two or more months divided by total loans. Matches NCUA's published rate.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "deposit_mix_certificates",
+"description": "Share certificates as a share of total shares and deposits.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "deposit_mix_ira_keogh",
+"description": "IRA and Keogh accounts as a share of total shares and deposits.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "deposit_mix_money_market",
+"description": "Money market shares as a share of total shares and deposits.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "deposit_mix_non_member",
+"description": "Non-member deposits as a share of total shares and deposits.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "deposit_mix_regular",
+"description": "Regular shares as a share of total shares and deposits.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "deposit_mix_share_drafts",
+"description": "Share draft (checking) accounts as a share of total shares and deposits.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "efficiency_ratio",
+"description": "Non-interest expense divided by (net interest income plus non-interest income).",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "employees_fte_estimate",
+"description": "Full-time employees plus half of part-time employees. An estimate, not an NCUA definition.",
+"kind": "count",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "fee_share_of_non_interest_income",
+"description": "Fee income divided by non-interest income.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "first_lien_growth_yoy",
+"description": "First-lien 1-4 family loans versus one year earlier.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "interest_expense_quarter",
+"description": "Interest expense for the single quarter.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "interest_income_quarter",
+"description": "Interest income for the single quarter.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "loan_growth_yoy",
+"description": "Total loans versus the same quarter one year earlier.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "loan_to_share",
+"description": "Loans divided by total shares and deposits. NCUA's headline liquidity ratio.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "loan_yield",
+"description": "Interest on loans annualized over year-end loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "loans_per_member",
+"description": "Average loan dollars per member.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "loans_to_assets",
+"description": "Loans divided by total assets.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "member_growth_yoy",
+"description": "Members versus one year earlier.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "members_per_branch",
+"description": "Members per branch.",
+"kind": "count",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "members_per_fte",
+"description": "Members per estimated full-time-equivalent employee.",
+"kind": "count",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "mix_auto",
+"description": "New plus used vehicle loans as a share of total loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "mix_commercial",
+"description": "Commercial loans as a share of total loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "mix_credit_card",
+"description": "Credit card loans as a share of total loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "mix_residential_real_estate",
+"description": "First lien, junior lien and other real estate loans as a share of total loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "net_chargeoff_rate",
+"description": "(Charge-offs minus recoveries), annualized from year to date, over year-end loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "net_chargeoff_rate_avg_loans_4q",
+"description": "Same, over the average of the last four quarter-end loan balances. Closest to NCUA's published ratio but not identical.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "net_income_quarter",
+"description": "Net income for the single quarter (year-to-date minus prior quarter).",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "net_worth_ratio_ex_cecl",
+"description": "Net worth minus the CECL transition provision, over assets. This is how NCUA publishes its net worth ratio from 2023 on.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "net_worth_to_assets",
+"description": "Net worth divided by total assets (1.0 = 100%).",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "nim_avg_assets_4q",
+"description": "Same, over four-quarter average assets. NCUA publishes 3.49% for June 2026; this gives about 3.5%.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "nim_year_end_assets",
+"description": "(Interest income minus interest expense) annualized over year-end assets.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "non_interest_expense_quarter",
+"description": "Non-interest expense for the single quarter.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "operating_expense_per_fte",
+"description": "Annualized non-interest expense per estimated FTE.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "opex_to_assets",
+"description": "Non-interest expense annualized over assets.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "provision_quarter",
+"description": "Provision for loan losses for the single quarter.",
+"kind": "dollars",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "provision_to_loans",
+"description": "Provision (credit loss expense) annualized over year-end loans.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "roa_avg_assets_4q",
+"description": "Net income annualized over the average of the last four quarter-end assets. NCUA's own denominator is not public, so this can differ by a few basis points.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "roa_year_end_assets",
+"description": "Net income annualized over year-end assets.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "share_growth_yoy",
+"description": "Total shares and deposits versus one year earlier.",
+"kind": "ratio",
+"category": "derived"
+},
+{
+"table_name": "metrics",
+"column_name": "shares_per_member",
+"description": "Average shares and deposits per member.",
+"kind": "dollars",
+"category": "derived"
+}
+]
