@@ -163,12 +163,28 @@ def q(name: str) -> str:
     return f'"{name}"'
 
 
+STATE_NAMES = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA", "colorado": "CO",
+    "connecticut": "CT", "delaware": "DE", "district of columbia": "DC", "florida": "FL", "georgia": "GA",
+    "hawaii": "HI", "idaho": "ID", "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD", "massachusetts": "MA",
+    "michigan": "MI", "minnesota": "MN", "mississippi": "MS", "missouri": "MO", "montana": "MT",
+    "nebraska": "NE", "nevada": "NV", "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM",
+    "new york": "NY", "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC", "south dakota": "SD",
+    "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA", "washington": "WA",
+    "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY", "puerto rico": "PR", "guam": "GU",
+}
+
+
 def check_state(state: Optional[str]) -> Optional[str]:
     if state is None:
         return None
     st = str(state).strip().upper()
+    if str(state).strip().lower() in STATE_NAMES:
+        return STATE_NAMES[str(state).strip().lower()]
     if len(st) != 2 or not st.isalpha():
-        raise ValueError(f"state must be a 2-letter postal code such as TX or NJ, got '{state}'.")
+        raise ValueError(f"state must be a 2-letter postal code such as TX or NJ, got '{state}'. Full state names such as Texas also work.")
     return st
 
 
@@ -224,6 +240,11 @@ def _quarter(quarter: Optional[str]) -> str:
     return quarter
 
 
+_SOURCES = {
+    "fact_call_report_curated": "NCUA 5300 Call Report amounts as published by NCUA (quarterly). Account codes are in the description where known.",
+    "metrics": "Derived by this project from NCUA 5300 Call Report fields; the formula is in the description.",
+    "dim_credit_union": "NCUA credit union directory attributes, one row per credit union per quarter.",
+}
 NOTE = (
     "Data: NCUA 5300 call reports, federally insured credit unions, 2018-03 to 2026-06, "
     "from github.com/bnovarini/ncua-data-analysis. Dollar fields are in dollars; ratio fields "
@@ -251,7 +272,8 @@ def list_fields(table: Optional[str] = None, search: Optional[str] = None, limit
             continue
         if search and search.lower() not in f"{c} {d} {cat or ''}".lower():
             continue
-        row = {"table": t, "field": c, "kind": k, "category": cat, "description": d}
+        row = {"table": t, "field": c, "kind": k, "category": cat, "description": d,
+               "source": _SOURCES.get(t, "NCUA call report data"), "data_through": latest_quarter()}
         if k == "ytd":
             row["basis"] = "year_to_date"
         if k == "ratio":
@@ -398,6 +420,14 @@ def find_credit_union(
             amb = not (len(exact) == 1 and not starts) and len(exact) + len(starts) + len(former) > 1
         else:
             amb = len(out) > 1
+        for r in out:
+            if r["match"] == "exact":
+                older = run(f"SELECT DISTINCT cu_number FROM dim WHERE {_NORM} = ? AND cu_number <> ? AND cu_number NOT IN "
+                            "(SELECT cu_number FROM dim WHERE quarter = ?)", [qn, r["cu_number"], qt])
+                if older:
+                    r["older_same_name"] = [o["cu_number"] for o in older][:5]
+                    r["note"] = ("Another credit union with the same name (cu_number in older_same_name) stopped reporting "
+                                 "earlier. This row is the one reporting in " + qt + ".")
         corp = bool(re.search(r"\bcorporate\b", _fold(name).lower()))
         for r in out:
             if corp:
@@ -413,17 +443,25 @@ def find_credit_union(
     for ph in phrases:
         toks = ph.split()
         cond = " AND ".join(f"contains({_norm_sql('name')}, ?)" for _ in toks)
+        fw, fp = [], []
+        if state:
+            fw.append("upper(state) = ?"); fp.append(state)
+        if charter_type:
+            fw.append("lower(charter_type) = ?"); fp.append(charter_type.lower())
+        if peer_group is not None:
+            fw.append("peer_group = ?"); fp.append(peer_group)
+        cond_all = " AND ".join([cond] + fw)
         gone += run(f"SELECT cu_number, name, city, state, max(quarter) AS last_reported_quarter FROM dim "
-                    f"WHERE {cond} GROUP BY cu_number, name, city, state HAVING max(quarter) < ? "
-                    "ORDER BY max(quarter) DESC LIMIT 5", toks + [qt])
+                    f"WHERE {cond_all} GROUP BY cu_number, name, city, state HAVING max(quarter) < ? "
+                    "ORDER BY max(quarter) DESC LIMIT 5", toks + fp + [qt])
     if gone:
-        return [{"no_match": f"No federally insured credit union matches '{name}' in {qt}, but these stopped reporting "
+        return [{"no_match": f"No federally insured credit union matches '{name}' (with the state, size and charter filters given) in {qt}, but these stopped reporting "
                              "earlier (merged, closed, or left federal insurance). Use their cu_number with quarter set to "
                              "the last reported quarter, and tell the user they are no longer reporting.", **g} for g in gone]
     extra_note = (" " + CORPORATE_NOTE) if re.search(r"\bcorporate\b", _fold(name).lower()) else ""
     return [{"no_match": f"No federally insured credit union matches '{name}' in {qt}. NCUA lists legal names, which can "
                          "differ from the brand name (BECU is listed as BOEING EMPLOYEES). Try a shorter or different part "
-                         "of the name, or search by state." + extra_note}]
+                         "of the name, or search by state. This dataset covers US federally insured credit unions only." + extra_note}]
 
 
 @mcp.tool(
@@ -747,7 +785,7 @@ def _coerce(field: str, v: Any) -> Any:
         "by default, because tiny credit unions produce extreme ratios (a $1M credit union can show a 34% ROA); rows "
         "carry assets_floor_applied. Set min_assets (0 to include everyone) to change it. Year-to-date fields "
         "(basis year_to_date in list_fields) are cumulative since January; use the *_quarter metrics for single "
-        "quarters. Ratios are fractions (0.05 = 5%). Example: top 10 by members_per_fte in peer_group 5. "
+        "quarters. Ratios are fractions (0.05 = 5%). Example: top 10 by members_per_fte in peer_group 5. Results over limit end with a truncated row giving total_matching and next_offset; pass offset to page. "
         "Field names come from list_fields. Metrics: " + METRIC_CATALOG
     )
 )
@@ -760,9 +798,12 @@ def query_metrics(
     quarter: Optional[str] = None,
     min_assets: Optional[float] = None,
     quarterly: Optional[bool] = None,
+    offset: int = 0,
 ) -> list[dict]:
     if limit < 1 or limit > MAX_ROWS:
         raise ValueError(f"limit must be between 1 and {MAX_ROWS}, got {limit}.")
+    if offset < 0:
+        raise ValueError(f"offset must be 0 or more, got {offset}.")
     if min_assets is not None and min_assets < 0:
         raise ValueError(f"min_assets must be 0 or more, got {min_assets}.")
     cols = ["cu_number", "name"] + [f for f in fields if f not in ("cu_number", "name")]
@@ -792,8 +833,7 @@ def query_metrics(
         f, op = q(fname), str(flt.get("op", "=")).lower()
         v = flt.get("value")
         if flt["field"] == "state" and op in ("=", "!=", "in"):
-            for x in (v if isinstance(v, list) else [v]):
-                check_state(x)
+            v = [check_state(x) for x in v] if isinstance(v, list) else check_state(v)
         if op == "in":
             vals = [_coerce(fname, x) for x in (v if isinstance(v, list) else [v])]
             where.append(f"{f} IN ({', '.join('?' for _ in vals)})"); p.extend(vals)
@@ -806,7 +846,9 @@ def query_metrics(
         else:
             raise ValueError("op must be one of = != > >= < <= in contains")
     order = f"ORDER BY {q(order_by)} {'DESC' if descending else 'ASC'} NULLS LAST" if order_by else ""
-    rows = run(f"SELECT {sel} FROM {src} t WHERE {' AND '.join(where)} {order} LIMIT {limit + 1}", p)
+    rows = run(f"SELECT {sel} FROM {src} t WHERE {' AND '.join(where)} {order}, cu_number LIMIT {limit + 1} OFFSET {int(offset)}"
+               if order else
+               f"SELECT {sel} FROM {src} t WHERE {' AND '.join(where)} ORDER BY cu_number LIMIT {limit + 1} OFFSET {int(offset)}", p)
     more = len(rows) > limit
     rows = rows[:limit]
     if order_by and floor and floor > 0:
@@ -825,7 +867,11 @@ def query_metrics(
             rows[0]["basis_note"] = ("Year-to-date fields are shown as per-quarter figures (this quarter minus the "
                                      "prior quarter of the same year). Set quarterly=false for raw year-to-date.")
     if more:
-        rows.append({"truncated": True, "message": f"More than {limit} rows match. Raise limit (max {MAX_ROWS}) or narrow the filters."})
+        total = run(f"SELECT count(*) AS n FROM {src} t WHERE {' AND '.join(where)}", p)[0]["n"]
+        nxt = offset + limit
+        rows.append({"truncated": True, "total_matching": total, "next_offset": nxt,
+                     "message": f"Showing rows {offset + 1}-{offset + limit} of {total}. Call again with offset={nxt} "
+                                f"for the next page (limit max {MAX_ROWS}), or narrow the filters."})
     return rows
 
 
@@ -844,7 +890,7 @@ class RateLimit:
             if len(q_) >= self.per_minute:
                 body = b'{"error":"rate limit exceeded, try again in a minute"}'
                 await send({"type": "http.response.start", "status": 429,
-                            "headers": [(b"content-type", b"application/json"), (b"retry-after", b"30")]})
+                            "headers": [(b"content-type", b"application/json"), (b"retry-after", b"60")]})
                 await send({"type": "http.response.body", "body": body})
                 return
             q_.append(now)
