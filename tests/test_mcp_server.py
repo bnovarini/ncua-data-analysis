@@ -171,3 +171,129 @@ class BreakTestRegressions(unittest.TestCase):
     def test_count_aggregate(self):
         r = srv.metric_series("total_assets", aggregate="count", start="2018-12", end="2018-12")[0]
         self.assertGreater(r["value"], 5000)
+
+
+@unittest.skipUnless(HAVE_DATA, "test data not downloaded")
+class Round2Regressions(unittest.TestCase):
+    """Found by the second break-test round against hosted 0.1.2."""
+
+    # 1. year-to-date handling
+    def test_ytd_field_is_quarterly_by_default_and_matches_net_income_quarter(self):
+        ytd = srv.metric_series("net_income_ytd", cu_number=5536, start="2025-03", end="2025-12")
+        qtr = srv.metric_series("net_income_quarter", cu_number=5536, start="2025-03", end="2025-12")
+        self.assertEqual([r["value"] for r in ytd], [r["value"] for r in qtr])
+        self.assertTrue(all(r["basis"] == "quarterly" for r in ytd))
+
+    def test_system_ytd_sum_is_not_a_sawtooth(self):
+        rows = srv.metric_series("net_income_ytd", start="2024-03", end="2025-03")
+        vals = [r["value"] for r in rows]
+        self.assertTrue(max(vals) / min(vals) < 2, vals)  # a raw YTD sum would run 3.7B -> 14.4B -> 3.9B
+
+    def test_raw_ytd_is_labeled_and_warned(self):
+        rows = srv.metric_series("net_income_ytd", start="2025-03", end="2025-06", quarterly=False)
+        self.assertEqual(rows[0]["basis"], "year_to_date")
+        self.assertIn("sawtooth", rows[0]["warning"])
+        with self.assertRaises(ValueError):
+            srv.metric_series("total_assets", quarterly=True)
+
+    def test_list_fields_marks_ytd(self):
+        r = srv.list_fields(search="chargeoffs_ytd")[0]
+        self.assertEqual(r["basis"], "year_to_date")
+
+    # 2. tiny credit union guard
+    def test_rankings_skip_tiny_credit_unions_by_default(self):
+        rows = srv.query_metrics(["roa_avg_assets_4q", "total_assets"], order_by="roa_avg_assets_4q", limit=5)
+        data = [r for r in rows if "cu_number" in r]
+        self.assertTrue(all(r["total_assets"] >= 10_000_000 for r in data))
+        self.assertTrue(all(r["assets_floor_applied"] == 10_000_000 for r in data))
+        raw = srv.query_metrics(["roa_avg_assets_4q", "total_assets"], order_by="roa_avg_assets_4q", limit=1, min_assets=0)
+        self.assertLess(raw[0]["total_assets"], 10_000_000)
+
+    def test_metric_series_min_assets(self):
+        a = srv.metric_series("total_assets", aggregate="count", start="2026-06", end="2026-06")[0]["value"]
+        b = srv.metric_series("total_assets", aggregate="count", start="2026-06", end="2026-06", min_assets=10_000_000)[0]["value"]
+        self.assertLess(b, a)
+
+    # 3. ambiguity and abbreviations
+    def test_shared_former_name_is_ambiguous(self):
+        rows = srv.find_credit_union(name="Community Financial")
+        self.assertTrue(all(r["ambiguous"] for r in rows))
+
+    def test_abbreviations_and_partial_words(self):
+        self.assertEqual(srv.find_credit_union(name="NFCU")[0]["cu_number"], 5536)
+        rows = srv.find_credit_union(name="Navy Fed")
+        self.assertEqual([r["cu_number"] for r in rows], [5536])
+        self.assertFalse(rows[0]["ambiguous"])
+
+    def test_one_exact_match_stays_unambiguous_despite_former_name_hit(self):
+        self.assertFalse(srv.find_credit_union(name="Navy Federal")[0]["ambiguous"])
+        self.assertFalse(srv.find_credit_union(name="Alliant")[0]["ambiguous"])
+
+    # 4. quarters past the end of the data
+    def test_future_quarter_is_a_data_limit_not_a_missing_credit_union(self):
+        for call in (lambda: srv.find_credit_union(name="Navy Federal", quarter="2026-09"),
+                     lambda: srv.metric_series("delinquency_rate", start="2026-09"),
+                     lambda: srv.credit_union_profile(5536, quarter="2026-09")):
+            with self.assertRaises(ValueError) as cm:
+                call()
+            self.assertIn("data limit", str(cm.exception))
+
+    def test_empty_rows_explain_themselves(self):
+        rows = srv.metric_series("loan_growth_yoy", start="2018-03", end="2018-06")
+        self.assertTrue(all("2019-03" in r["note"] for r in rows))
+
+    # 5. CECL break
+    def test_cecl_break_note_on_the_boundary_quarter(self):
+        rows = srv.metric_series("allowance_to_loans", start="2022-12", end="2023-06")
+        notes = {r["quarter"]: r.get("break_note") for r in rows}
+        self.assertIsNotNone(notes["2023-03"])
+        self.assertIsNone(notes["2022-12"])
+        nw = srv.metric_series("net_worth_to_assets", start="2022-12", end="2023-06")
+        self.assertIn("net_worth_ratio_ex_cecl", [r for r in nw if r["quarter"] == "2023-03"][0]["break_note"])
+
+    # 6. pooled system-level metrics
+    def test_pooled_efficiency_differs_from_median(self):
+        pooled = srv.metric_series("efficiency_ratio", aggregate="pooled", start="2025-12", end="2025-12")[0]["value"]
+        median = srv.metric_series("efficiency_ratio", start="2025-12", end="2025-12")[0]["value"]
+        self.assertTrue(0.55 < pooled < 0.85)
+        self.assertNotAlmostEqual(pooled, median, places=3)
+
+    def test_pooled_member_growth_is_positive_while_median_is_negative(self):
+        pooled = srv.metric_series("member_growth_yoy", aggregate="pooled", start="2025-12", end="2025-12")[0]["value"]
+        median = srv.metric_series("member_growth_yoy", start="2025-12", end="2025-12")[0]["value"]
+        self.assertGreater(pooled, 0.01)
+        self.assertLess(median, 0)
+
+    def test_pooled_rejects_unsupported_field_and_cu_number_is_ignored_safely(self):
+        with self.assertRaises(ValueError):
+            srv.metric_series("members_per_fte", aggregate="pooled")
+
+    # 7. units
+    def test_percent_x100_field_is_labeled(self):
+        r = srv.metric_series("net_worth_ratio_pct_x100", cu_number=5536, start="2026-06")[0]
+        self.assertIn("1165 = 11.65%", r["unit"])
+        self.assertIn("unit", [x for x in srv.list_fields(search="net_worth_ratio_pct_x100")][0])
+
+    # 8. refusal hints
+    def test_refusal_hints(self):
+        for name, expect in (("auto_loan_rate", "loan_yield"), ("ceo_salary", "employee_compensation_ytd"),
+                             ("members_by_age", "demographics"), ("branches_closed", "branches")):
+            with self.assertRaises(ValueError) as cm:
+                srv.q(name)
+            self.assertIn(expect, str(cm.exception), name)
+
+    # 9. input hygiene
+    def test_limits_and_filters_are_validated(self):
+        for bad in (0, -1, 100000):
+            with self.assertRaises(ValueError):
+                srv.query_metrics(["members"], limit=bad)
+        with self.assertRaises(ValueError):
+            srv.query_metrics(["members"], filters=[{"field": "members", "op": ">"}])
+        with self.assertRaises(ValueError) as cm:
+            srv.query_metrics(["members"], filters=[{"field": "total_assets", "op": ">", "value": "abc"}])
+        self.assertIn("must be a number", str(cm.exception))
+
+    def test_truncation_is_flagged(self):
+        rows = srv.query_metrics(["members"], limit=2, order_by="members")
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(rows[-1]["truncated"])
