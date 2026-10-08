@@ -1,6 +1,6 @@
 [project]
 name = "ncua-data-analysis"
-version = "0.1.1"
+version = "0.1.2"
 description = "Clean, documented NCUA call report data for credit union analysis: lending, deposits and operations"
 requires-python = ">=3.10"
 dependencies = ["duckdb>=1.0", "mcp>=1.2,<2"]
