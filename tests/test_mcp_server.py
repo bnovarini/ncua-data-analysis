@@ -221,6 +221,9 @@ class Round2Regressions(unittest.TestCase):
 
     def test_abbreviations_and_partial_words(self):
         self.assertEqual(srv.find_credit_union(name="NFCU")[0]["cu_number"], 5536)
+        r = srv.find_credit_union(name="NFCU")[0]
+        self.assertTrue(r["ambiguous"])
+        self.assertIn("initials", r["note"])
         rows = srv.find_credit_union(name="Navy Fed")
         self.assertEqual([r["cu_number"] for r in rows], [5536])
         self.assertFalse(rows[0]["ambiguous"])
