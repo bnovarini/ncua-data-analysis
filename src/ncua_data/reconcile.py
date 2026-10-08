@@ -65,11 +65,13 @@ for _q, _v in _DEP.items():
     for _lbl, _e, _x in zip(["share drafts", "regular shares", "money market accounts", "share certificates", "IRA/Keogh accounts", "non-member deposits"],
                             ["drafts", "regular", "mm", "certs", "ira", "nonmember"], _v):
         CHECKS.append(Check(_q, f"{_lbl} ($B)", f"{_e} / 1e9", _x, 0.05, SRC_2026Q2))
+CHECKS.append(Check("2026-06", "number of loans outstanding (millions)", "loan_count / 1e6", 88.6, 0.05, SRC_2026Q2))
+CHECKS.append(Check("2025-12", "number of loans outstanding (millions)", "loan_count / 1e6", 88.7, 0.05, SRC_2026Q2))
 CHECKS.append(Check("2026-06", "employee compensation, annualized ($B)", "comp_ytd * 4/2 / 1e9", 41.1, 0.05, SRC_2026Q2))
 
 AGG_SQL = """
 CREATE OR REPLACE TEMP VIEW agg AS
-SELECT f.quarter, count(*) AS n, sum(members) AS members, sum(loans_and_leases_total) AS loans,
+SELECT f.quarter, count(*) AS n, sum(members) AS members, sum(loans_and_leases_count) AS loan_count, sum(loans_and_leases_total) AS loans,
   sum(loans_new_vehicle) AS new_auto, sum(loans_used_vehicle) AS used_auto, sum(loans_credit_card) AS credit_card,
   sum(loans_student) AS student,
   sum(loans_first_lien_residential + loans_junior_lien_residential) AS residential,
