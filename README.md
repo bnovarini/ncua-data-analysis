@@ -75,6 +75,10 @@ A local MCP server lets an AI assistant query this dataset in plain language. It
 
 **Hosted, nothing to install:** `https://ncua-data-analysis.fly.dev/mcp` (streamable HTTP, read-only, rate limited to 60 requests a minute per client). Add it as a remote MCP server in any client that supports one, for example `{"mcpServers": {"ncua-data": {"url": "https://ncua-data-analysis.fly.dev/mcp"}}}`.
 
+[![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=ncua-data&config=eyJ1cmwiOiJodHRwczovL25jdWEtZGF0YS1hbmFseXNpcy5mbHkuZGV2L21jcCJ9) [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_MCP-0098FF?logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect/mcp/install?name=ncua-data&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fncua-data-analysis.fly.dev%2Fmcp%22%7D) [![Install in VS Code Insiders](https://img.shields.io/badge/VS_Code_Insiders-Install_MCP-24bfa5?logo=visualstudiocode&logoColor=white)](https://insiders.vscode.dev/redirect/mcp/install?name=ncua-data&config=%7B%22type%22%3A%22http%22%2C%22url%22%3A%22https%3A%2F%2Fncua-data-analysis.fly.dev%2Fmcp%22%7D)
+
+Claude Code: `claude mcp add --transport http ncua-data https://ncua-data-analysis.fly.dev/mcp`
+
 Tools: `list_fields`, `find_credit_union`, `credit_union_profile`, `metric_series` (one credit union or an aggregate across all), `peer_compare` (by asset group, state or charter), and `query_metrics` (filters, ordering and limits; no raw SQL). Set `NCUA_DATA_DIR` to use a folder of already-downloaded files. Status: first working version, tested over stdio with a real MCP client; not yet listed in the MCP registry.
 
 ## Download
