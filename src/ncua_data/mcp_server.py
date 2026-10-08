@@ -112,8 +112,15 @@ def run(sql: str, params: list[Any] | None = None) -> list[dict]:
     return out
 
 
+_LATEST: Optional[str] = None
+FIRST_QUARTER = "2018-03"
+
+
 def latest_quarter() -> str:
-    return run("SELECT max(quarter) q FROM dim")[0]["q"]
+    global _LATEST
+    if _LATEST is None:
+        _LATEST = run("SELECT max(quarter) q FROM dim")[0]["q"]
+    return _LATEST
 
 
 def _unknown_field_message(name: str) -> str:
@@ -129,6 +136,18 @@ def _unknown_field_message(name: str) -> str:
     elif any(k in low for k in ("best", "worst", "rank", "score", "rating", "top")):
         msg += (" There is no single 'best' measure. Pick explicit metrics (for example roa_avg_assets_4q, "
                 "delinquency_rate, efficiency_ratio, net_worth_to_assets) and say which one you ranked on.")
+    elif any(k in low for k in ("apr", "interest_rate", "rate_on", "pricing", "_rate")) and "delinq" not in low and "chargeoff" not in low:
+        msg += (" Loan and share interest rates by product are not in the NCUA call report. Closest: loan_yield "
+                "(interest on loans / loans, an average yield), cost_of_shares (interest expense / shares), nim_avg_assets_4q.")
+    elif any(k in low for k in ("salary", "ceo", "executive", "bonus", "wage", "pay")):
+        msg += (" Individual or executive pay is not in the call report. Closest: employee_compensation_ytd (total "
+                "compensation, year to date), compensation_per_fte, compensation_share_of_opex.")
+    elif any(k in low for k in ("age", "gender", "race", "income_of", "demograph", "fico", "credit_score", "zip_of_members")):
+        msg += (" Member demographics and credit scores are not in the call report. Closest: members, potential_members, "
+                "members_per_branch, is_low_income, is_minority_depository, field_of_membership_code.")
+    elif any(k in low for k in ("complaint", "review", "customer_satisfaction", "closed", "opened", "closure")):
+        msg += (" Complaints, reviews and branch openings or closings are not in the call report. Only the current "
+                "branch count exists (branches), so changes can be read from its series.")
     toks = [t for t in re.split(r"[^a-z0-9]+", low) if len(t) > 3]
     close = difflib.get_close_matches(str(name), sorted(ALL_FIELDS), n=5, cutoff=0.6)
     close += [f for f in sorted(ALL_FIELDS) if any(t in f for t in toks) and f not in close][:5]
@@ -178,6 +197,11 @@ def _quarter(quarter: Optional[str]) -> str:
         return latest_quarter()
     if not (len(quarter) == 7 and quarter[4] == "-" and quarter[5:] in ("03", "06", "09", "12")):
         raise ValueError("quarter must look like 2025-12 (quarter ends: 03, 06, 09, 12)")
+    if quarter > latest_quarter():
+        raise ValueError(f"The dataset ends at {latest_quarter()}; {quarter} is after the last reported quarter. "
+                         "That is a data limit, not a credit union that stopped reporting.")
+    if quarter < FIRST_QUARTER:
+        raise ValueError(f"The dataset starts at {FIRST_QUARTER}; {quarter} is before the first quarter.")
     return quarter
 
 
@@ -195,18 +219,30 @@ mcp = FastMCP("ncua-data-analysis", instructions=NOTE)
         "List available fields with plain-language definitions from the data dictionary. "
         "Filter by table ('metrics' = computed ratios, 'fact_call_report_curated' = reported amounts, "
         "'dim_credit_union' = attributes), by search text, or both. "
+        "Fields marked basis=year_to_date reset each January; metric_series can de-cumulate them. "
         f"Computed metrics available: {METRIC_CATALOG}"
     )
 )
 def list_fields(table: Optional[str] = None, search: Optional[str] = None, limit: int = 60) -> list[dict]:
+    if limit < 1 or limit > MAX_ROWS:
+        raise ValueError(f"limit must be between 1 and {MAX_ROWS}, got {limit}.")
     rows = []
     for t, c, d, k, cat in _DICT:
         if table and t != table:
             continue
         if search and search.lower() not in f"{c} {d} {cat or ''}".lower():
             continue
-        rows.append({"table": t, "field": c, "kind": k, "category": cat, "description": d})
-    return rows[: max(1, min(limit, MAX_ROWS))]
+        row = {"table": t, "field": c, "kind": k, "category": cat, "description": d}
+        if k == "ytd":
+            row["basis"] = "year_to_date"
+        if k == "ratio":
+            row["unit"] = "fraction (0.05 = 5%)"
+        elif k == "pct":
+            row["unit"] = "hundredths of a percent (1165 = 11.65%)"
+        if c in FIELD_NOTES:
+            row["note"] = FIELD_NOTES[c]
+        rows.append(row)
+    return rows[:limit]
 
 
 _STOP = r"\b(federal|credit|union|fcu|cu|the)\b"
@@ -260,7 +296,9 @@ def find_credit_union(
 ) -> list[dict]:
     qt = _quarter(quarter)
     state, peer_group = check_state(state), check_peer_group(peer_group)
-    lim = max(1, min(limit, 50))
+    if limit < 1 or limit > 50:
+        raise ValueError(f"limit must be between 1 and 50, got {limit}.")
+    lim = limit
     base_where, base_p = ["is_federally_insured", "quarter = ?"], [qt]
     if state:
         base_where.append("upper(state) = ?"); base_p.append(state)
@@ -313,12 +351,38 @@ def find_credit_union(
                 if r["name"] != fm[r["cu_number"]] and r["cu_number"] not in seen:
                     r["match"], r["matched_former_name"] = "former_name", fm[r["cu_number"]]
                     seen[r["cu_number"]] = r
-    order = {"exact": 0, "starts_with": 1, "contains": 2, "former_name": 3}
+    if not seen and qn:
+        # Abbreviations and partial words: "Navy Fed" (words are prefixes of the full legal name), "NFCU" (initials).
+        raw = "trim(regexp_replace(regexp_replace(lower(name), '[^a-z0-9 ]', ' ', 'g'), '\\s+', ' ', 'g'))"
+        words = [w for w in re.sub(r"[^a-z0-9 ]", " ", name.lower()).split() if w]
+        conds, cp = [], []
+        for w in words:
+            conds.append(f"contains({raw}, ?)"); cp.append(w)
+        extra = run(f"SELECT {cols}, 'partial_words' AS _m FROM cu WHERE {' AND '.join(base_where)} AND {' AND '.join(conds)} "
+                    f"ORDER BY total_assets DESC NULLS LAST LIMIT {lim}", base_p + cp)
+        if len(words) == 1 and len(words[0]) >= 3:
+            ini = f"array_to_string(list_transform(list_filter(string_split({raw}, ' '), x -> x <> ''), x -> x[1]), '')"
+            tk = words[0]
+            extra += run(f"SELECT {cols}, 'abbreviation' AS _m FROM cu WHERE {' AND '.join(base_where)} AND "
+                         f"({ini} = ? OR {ini} = ?) ORDER BY total_assets DESC NULLS LAST LIMIT {lim}", base_p + [tk, (lambda t: t if len(t) >= 2 else tk)(tk.removesuffix('fcu').removesuffix('cu'))])
+        for r in extra:
+            r["match"] = r.pop("_m")
+            seen.setdefault(r["cu_number"], r)
+    order = {"exact": 0, "starts_with": 1, "contains": 2, "former_name": 3, "partial_words": 4, "abbreviation": 5}
     out = sorted(seen.values(), key=lambda r: (order[r["match"]], -(r["total_assets"] or 0)))[:lim]
     if out:
-        close = [r for r in out if r["match"] in ("exact", "starts_with")] or [r for r in out if r["match"] == "former_name"]
+        exact = [r for r in out if r["match"] == "exact"]
+        starts = [r for r in out if r["match"] == "starts_with"]
+        former = [r for r in out if r["match"] == "former_name"]
+        if exact or starts:
+            # one clear exact match is not made ambiguous by former-name hits; anything else that overlaps is
+            amb = not (len(exact) == 1 and not starts) and len(exact) + len(starts) + len(former) > 1
+        elif former:
+            amb = len(former) > 1
+        else:
+            amb = len(out) > 1
         for r in out:
-            r["ambiguous"] = len(close) > 1 or (not close and len(out) > 1)
+            r["ambiguous"] = amb
         return out
     # Nothing in this quarter. Is it a credit union that stopped reporting?
     gone = []
@@ -362,20 +426,65 @@ def credit_union_profile(cu_number: int, quarter: Optional[str] = None) -> dict:
 
 
 SUMMABLE = ("dollars", "stock", "count", "ytd")
-AGGS = ("median", "mean", "sum", "count", "ratio_of_sums")
+CECL_NOTE = ("Accounting break: most credit unions adopted CECL in 2023. Allowance and provision levels step up around "
+             "2023-03 because of the accounting change, not credit deterioration. Do not read the jump as a trend.")
+NETWORTH_NOTE = ("From 2023 this includes the CECL transition provision. NCUA's published net worth ratio is "
+                 "net_worth_ratio_ex_cecl.")
+FIELD_NOTES = {
+    "allowance_to_loans": CECL_NOTE, "allowance_for_credit_losses": CECL_NOTE, "provision_to_loans": CECL_NOTE,
+    "provision_quarter": CECL_NOTE, "provision_for_loan_losses_ytd": CECL_NOTE,
+    "net_worth_to_assets": NETWORTH_NOTE, "net_worth": NETWORTH_NOTE,
+    "net_worth_ratio_pct_x100": "UNITS: hundredths of a percent (1165 = 11.65%). Prefer net_worth_ratio_ex_cecl, a fraction (0.1165 = 11.65%).",
+}
+CECL_BREAK_QUARTER = "2023-03"
+YTD_WARNING = ("Year-to-date values reset every January, so charting or summing them across quarters gives a sawtooth. "
+               "Leave quarterly=true (the default) for per-quarter figures.")
+IDX = "(cast(left(quarter, 4) AS INTEGER) * 4 + cast(right(quarter, 2) AS INTEGER) / 3)"
+# Pooled (sum-based) versions of ratio metrics. {a} is the annualisation factor for year-to-date flows.
+POOLED = {
+    "efficiency_ratio": "sum(non_interest_expense_ytd) / nullif(sum(interest_income_ytd) - sum(interest_expense_ytd) + sum(non_interest_income_ytd), 0)",
+    "delinquency_rate": "sum(delinquent_2m_plus) / nullif(sum(loans_and_leases_total), 0)",
+    "loan_to_share": "sum(loans_and_leases_total) / nullif(sum(total_shares_and_deposits), 0)",
+    "loans_to_assets": "sum(loans_and_leases_total) / nullif(sum(total_assets), 0)",
+    "net_worth_to_assets": "sum(net_worth) / nullif(sum(total_assets), 0)",
+    "net_worth_ratio_ex_cecl": "(sum(net_worth) - sum(coalesce(cecl_transition_provision, 0))) / nullif(sum(total_assets), 0)",
+    "allowance_to_loans": "sum(allowance_for_credit_losses) / nullif(sum(loans_and_leases_total), 0)",
+    "mix_auto": "sum(loans_new_vehicle + loans_used_vehicle) / nullif(sum(loans_and_leases_total), 0)",
+    "net_chargeoff_rate": "(sum(chargeoffs_ytd) - sum(recoveries_ytd)) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) / nullif(sum(loans_and_leases_total), 0)",
+    "roa_year_end_assets": "sum(net_income_ytd) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) / nullif(sum(total_assets), 0)",
+    "nim_year_end_assets": "(sum(interest_income_ytd) - sum(interest_expense_ytd)) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) / nullif(sum(total_assets), 0)",
+    "loan_yield": "sum(interest_on_loans_ytd) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) / nullif(sum(loans_and_leases_total), 0)",
+    "cost_of_shares": "sum(interest_expense_ytd) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) / nullif(sum(total_shares_and_deposits), 0)",
+    "opex_to_assets": "sum(non_interest_expense_ytd) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) / nullif(sum(total_assets), 0)",
+}
+# Same-credit-union growth: sum(now) / sum(a year ago) - 1, over credit unions present in both quarters.
+POOLED_GROWTH = {
+    "asset_growth_yoy": "total_assets", "loan_growth_yoy": "loans_and_leases_total",
+    "share_growth_yoy": "total_shares_and_deposits", "member_growth_yoy": "members",
+}
+AGGS = ("median", "mean", "sum", "count", "ratio_of_sums", "pooled")
+
 
 
 @mcp.tool(
     description=(
         "Time series of one metric or reported field. Give cu_number for one credit union. Otherwise it aggregates "
-        "all federally insured credit unions matching the optional state (2-letter code) / peer_group (1-6) filters: "
-        "aggregate='median' (default for ratios), 'mean', 'sum' (default for dollar and count fields; not allowed on "
-        "ratios), 'count' (how many credit unions report the field, e.g. field total_assets), or 'ratio_of_sums' "
-        "(sum of field / sum of the denominator field, the system-wide ratio, e.g. field shares_certificates with "
-        "denominator total_shares_and_deposits for the certificate share of all deposits). The result includes the "
-        "number of credit unions. Median and mean of a ratio treat every credit union equally, so a system-wide mix "
-        "needs ratio_of_sums. group_by='peer_group' or 'state' returns one row per group, to rank groups against each "
-        "other (defaults to the latest quarter). Range in quarters like 2021-12. Metrics: " + METRIC_CATALOG
+        "all federally insured credit unions matching the optional state (2-letter code) / peer_group (1-6) / "
+        "min_assets filters: aggregate='median' (default for ratios), 'mean', 'sum' (default for dollar and count "
+        "fields; not allowed on ratios), 'count' (how many credit unions report the field), 'ratio_of_sums' (sum of "
+        "field / sum of the denominator field, e.g. shares_certificates over total_shares_and_deposits), or 'pooled' "
+        "(the system-wide version of a ratio metric: total numerators over total denominators, not a median of "
+        "credit unions; available for efficiency_ratio, delinquency_rate, loan_to_share, loans_to_assets, "
+        "net_worth_to_assets, net_worth_ratio_ex_cecl, allowance_to_loans, mix_auto, net_chargeoff_rate, "
+        "roa_year_end_assets, nim_year_end_assets, loan_yield, cost_of_shares, opex_to_assets and the growth metrics "
+        "asset/loan/share/member_growth_yoy, which compare the same credit unions a year apart). Median and mean "
+        "treat every credit union equally, tiny ones included. Year-to-date fields (basis year_to_date in "
+        "list_fields: income, expenses, charge-offs, loans granted) are returned per quarter by default "
+        "(quarterly=true: this quarter minus the prior quarter of the same year); quarterly=false returns the raw "
+        "year-to-date figure, which resets each January. Each row carries basis (and unit for percent-x100 fields); "
+        "rows with no data explain why. group_by='peer_group' or 'state' returns one row per group (defaults to the "
+        "latest quarter). Series that cross the 2023 CECL accounting change carry a break_note. Range in quarters "
+        "like 2021-12; the data runs 2018-03 to the latest quarter. Metrics: " + METRIC_CATALOG
     )
 )
 def metric_series(
@@ -389,8 +498,11 @@ def metric_series(
     year_end_only: bool = False,
     denominator: Optional[str] = None,
     group_by: Optional[str] = None,
+    quarterly: Optional[bool] = None,
+    min_assets: Optional[float] = None,
 ) -> list[dict]:
     f = q(field)
+    kind = KIND.get(field)
     if start:
         _quarter(start)
     if end:
@@ -401,44 +513,106 @@ def metric_series(
         raise ValueError("group_by compares groups of credit unions; leave cu_number out.")
     if group_by and not start and not end:
         start = end = latest_quarter()
-    where, p = ["quarter >= ?", "quarter <= ?"], [start or "2018-03", end or latest_quarter()]
-    if year_end_only:
-        where.append("right(quarter, 2) = '12'")
-    if cu_number is not None:
-        where.append("cu_number = ?"); p.append(cu_number)
-        rows = run(f"SELECT quarter, {f} AS value FROM cu WHERE {' AND '.join(where)} ORDER BY quarter", p)
-        if not rows:
-            return [no_data_error(cu_number, end or latest_quarter())]
+    lo, hi = start or FIRST_QUARTER, end or latest_quarter()
+    if quarterly is True and kind != "ytd":
+        raise ValueError(f"quarterly applies only to year-to-date fields; '{field}' is not one.")
+    is_ytd = kind == "ytd"
+    use_q = is_ytd and quarterly is not False
+    rng = ["quarter >= ?", "quarter <= ?"] + (["right(quarter, 2) = '12'"] if year_end_only else [])
+    rng_p = [lo, hi]
+    basis = ("quarterly" if use_q else "year_to_date") if is_ytd else None
+    if use_q:
+        vexpr = (f"CASE WHEN right(quarter, 2) = '03' THEN raw WHEN {IDX} - lag({IDX}) OVER w = 1 "
+                 "THEN raw - lag(raw) OVER w END")
+    else:
+        vexpr = "raw"
+
+    def finish(rows: list[dict], aggregated: bool) -> list[dict]:
+        for r in rows:
+            if basis:
+                r["basis"] = basis
+            if kind == "pct":
+                r["unit"] = "hundredths of a percent (1165 = 11.65%)"
+            empty = (r.get("n_credit_unions") == 0) if aggregated else (r.get("value") is None)
+            if empty:
+                if field.endswith("_yoy"):
+                    r["note"] = "No value: year-over-year fields need the same quarter a year earlier, so they start in 2019-03."
+                elif field == "cecl_transition_provision":
+                    r["note"] = "No value: the CECL transition provision is reported from 2023-03."
+                elif is_ytd and use_q:
+                    r["note"] = "No value: a quarterly figure needs the prior quarter of the same year (or Q1)."
+                else:
+                    r["note"] = "No credit union reported a value for this field in this quarter."
+            if field in FIELD_NOTES and FIELD_NOTES[field] is CECL_NOTE and r.get("quarter") == CECL_BREAK_QUARTER:
+                r["break_note"] = CECL_NOTE
+            if field in ("net_worth_to_assets", "net_worth") and r.get("quarter") == CECL_BREAK_QUARTER:
+                r["break_note"] = NETWORTH_NOTE
+        if rows and is_ytd and not use_q:
+            rows[0]["warning"] = YTD_WARNING
         return rows
-    where.append("is_federally_insured")
+
+    if cu_number is not None:
+        rows = run(
+            f"WITH s AS (SELECT quarter, cu_number, {f} AS raw FROM cu WHERE cu_number = ?), "
+            f"v AS (SELECT quarter, {vexpr} AS value FROM s WINDOW w AS (PARTITION BY cu_number ORDER BY quarter)) "
+            f"SELECT quarter, value FROM v WHERE {' AND '.join(rng)} ORDER BY quarter", [cu_number] + rng_p)
+        if not rows:
+            return [no_data_error(cu_number, hi)]
+        return finish(rows, False)
+
     state, peer_group = check_state(state), check_peer_group(peer_group)
+    where, p = ["is_federally_insured"], []
     if state:
         where.append("upper(state) = ?"); p.append(state)
     if peer_group is not None:
         where.append("peer_group = ?"); p.append(peer_group)
-    kind = KIND.get(field)
+    if min_assets is not None:
+        where.append("total_assets >= ?"); p.append(float(min_assets))
     agg = (aggregate or ("sum" if kind in SUMMABLE else "median")).lower()
     if agg not in AGGS:
         raise ValueError("aggregate must be one of: " + ", ".join(AGGS))
     if agg == "sum" and kind not in SUMMABLE:
         raise ValueError(f"'{field}' is a ratio or attribute, so summing it across credit unions is meaningless. Use "
-                         "median or mean, or ratio_of_sums with a denominator field for the system-wide ratio.")
+                         "median or mean, pooled for the system-wide ratio, or ratio_of_sums with a denominator field.")
+    gcol = f"{group_by}, " if group_by else ""
+    gb = f"quarter, {group_by}" if group_by else "quarter"
+    tail = f"GROUP BY {gb} ORDER BY quarter{', value DESC' if group_by else ''}"
+
+    if agg == "pooled":
+        if field in POOLED_GROWTH:
+            cur = POOLED_GROWTH[field]
+            ok = f"gap = 4 AND prior > 0"
+            return finish(run(
+                f"WITH s AS (SELECT quarter, cu_number, state, peer_group, {cur} AS cur, lag({cur}, 4) OVER w AS prior, "
+                f"{IDX} - lag({IDX}, 4) OVER w AS gap FROM cu WHERE {' AND '.join(where)} "
+                "WINDOW w AS (PARTITION BY cu_number ORDER BY quarter)) "
+                f"SELECT quarter, {gcol}sum(CASE WHEN {ok} THEN cur END) / nullif(sum(CASE WHEN {ok} THEN prior END), 0) - 1 AS value, "
+                f"count(CASE WHEN {ok} THEN 1 END) AS n_credit_unions FROM s WHERE {' AND '.join(rng)} {tail}",
+                p + rng_p), True)
+        if field not in POOLED:
+            raise ValueError(f"No pooled version of '{field}'. Pooled is available for: "
+                             + ", ".join(sorted(list(POOLED) + list(POOLED_GROWTH))) + ".")
+        return finish(run(
+            f"SELECT quarter, {gcol}{POOLED[field]} AS value, count(*) AS n_credit_unions FROM cu "
+            f"WHERE {' AND '.join(where + rng)} {tail}", p + rng_p), True)
     if agg == "ratio_of_sums":
         if not denominator:
             raise ValueError("ratio_of_sums needs denominator, e.g. field shares_certificates, denominator total_shares_and_deposits.")
         d = q(denominator)
         if kind not in SUMMABLE or KIND.get(denominator) not in SUMMABLE:
             raise ValueError("ratio_of_sums needs dollar or count fields for both field and denominator.")
-        fn = f"sum({f}) / nullif(sum({d}), 0)"
-    else:
-        fn = {"median": f"median({f})", "mean": f"avg({f})", "sum": f"sum({f})", "count": f"count({f})"}[agg]
-    gcol = f"{group_by}, " if group_by else ""
-    gb = f"quarter, {group_by}" if group_by else "quarter"
-    return run(
-        f"SELECT quarter, {gcol}{fn} AS value, count({f}) AS n_credit_unions FROM cu WHERE {' AND '.join(where)} "
-        f"GROUP BY {gb} ORDER BY quarter{', value DESC' if group_by else ''}",
-        p,
-    )
+        if is_ytd != (KIND.get(denominator) == "ytd"):
+            raise ValueError("ratio_of_sums needs both fields on the same basis (both year-to-date or both balances).")
+        return finish(run(
+            f"SELECT quarter, {gcol}sum({f}) / nullif(sum({d}), 0) AS value, count({f}) AS n_credit_unions FROM cu "
+            f"WHERE {' AND '.join(where + rng)} {tail}", p + rng_p), True)
+    fn = {"median": "median(value)", "mean": "avg(value)", "sum": "sum(value)", "count": "count(value)"}[agg]
+    return finish(run(
+        f"WITH s AS (SELECT quarter, cu_number, state, peer_group, {f} AS raw FROM cu WHERE {' AND '.join(where)}), "
+        f"v AS (SELECT quarter, cu_number, state, peer_group, {vexpr} AS value FROM s "
+        "WINDOW w AS (PARTITION BY cu_number ORDER BY quarter)) "
+        f"SELECT quarter, {gcol}{fn} AS value, count(value) AS n_credit_unions FROM v WHERE {' AND '.join(rng)} {tail}",
+        p + rng_p), True)
 
 
 PEER_BASES = {
@@ -486,8 +660,15 @@ def peer_compare(
             [me[m]] + p,
         )[0]
         pct = None if me[m] is None or not s["n"] else round(100 * s["below"] / s["n"], 1)
-        out.append({"field": m, "value": me[m], "peer_median": s["med"], "peer_p25": s["p25"], "peer_p75": s["p75"],
-                    "percentile_rank": pct, "peers": s["n"]})
+        row = {"field": m, "value": me[m], "peer_median": s["med"], "peer_p25": s["p25"], "peer_p75": s["p75"],
+               "percentile_rank": pct, "peers": s["n"]}
+        if KIND.get(m) == "ytd":
+            row["basis"] = "year_to_date"
+        if KIND.get(m) == "pct":
+            row["unit"] = "hundredths of a percent (1165 = 11.65%)"
+        if m in FIELD_NOTES:
+            row["note"] = FIELD_NOTES[m]
+        out.append(row)
     return {
         "credit_union": {"cu_number": cu_number, "name": me["name"], "state": me["state"], "peer_group": me["peer_group_label"]},
         "quarter": qt,
@@ -497,13 +678,39 @@ def peer_compare(
 
 
 OPS = {"=": "=", "!=": "!=", ">": ">", ">=": ">=", "<": "<", "<=": "<="}
+NUMERIC_ATTRS = {"cu_number", "rssd", "county_code", "peer_group", "year_opened"}
+DEFAULT_RANK_FLOOR = 10_000_000.0
+
+
+def _coerce(field: str, v: Any) -> Any:
+    """Check a filter value fits the field, so bad input gives a clear error instead of a raw database one."""
+    if v is None:
+        raise ValueError(f"Filter on '{field}' needs a value.")
+    kind = KIND.get(field)
+    if kind == "attribute" and field not in NUMERIC_ATTRS:
+        if field.startswith("is_"):
+            if isinstance(v, bool):
+                return v
+            raise ValueError(f"'{field}' is true/false; use true or false, got {v!r}.")
+        return str(v)
+    if isinstance(v, bool):
+        raise ValueError(f"'{field}' is numeric; got {v!r}.")
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"'{field}' is numeric, so the filter value must be a number, got {v!r}.")
 
 
 @mcp.tool(
     description=(
         "Constrained table query, one quarter at a time (default latest), federally insured credit unions only. "
         "Pick fields to return, optional filters as [{'field':..., 'op': one of = != > >= < <= in contains, 'value':...}], "
-        f"an order_by field and limit (max {MAX_ROWS}). No raw SQL. Example: top 10 by members_per_fte in peer_group 5. "
+        f"an order_by field and limit (1 to {MAX_ROWS}). If more rows match than the limit, the last row is "
+        "{'truncated': true, ...}. No raw SQL. When order_by is set, credit unions under $10M in assets are left out "
+        "by default, because tiny credit unions produce extreme ratios (a $1M credit union can show a 34% ROA); rows "
+        "carry assets_floor_applied. Set min_assets (0 to include everyone) to change it. Year-to-date fields "
+        "(basis year_to_date in list_fields) are cumulative since January; use the *_quarter metrics for single "
+        "quarters. Ratios are fractions (0.05 = 5%). Example: top 10 by members_per_fte in peer_group 5. "
         "Field names come from list_fields. Metrics: " + METRIC_CATALOG
     )
 )
@@ -514,26 +721,46 @@ def query_metrics(
     descending: bool = True,
     limit: int = 25,
     quarter: Optional[str] = None,
+    min_assets: Optional[float] = None,
 ) -> list[dict]:
+    if limit < 1 or limit > MAX_ROWS:
+        raise ValueError(f"limit must be between 1 and {MAX_ROWS}, got {limit}.")
     cols = ["cu_number", "name"] + [f for f in fields if f not in ("cu_number", "name")]
     sel = ", ".join(q(c) for c in cols[:40])
     where, p = ["quarter = ?", "is_federally_insured"], [_quarter(quarter)]
+    floor = min_assets if min_assets is not None else (DEFAULT_RANK_FLOOR if order_by else 0.0)
+    if floor and floor > 0:
+        where.append("total_assets >= ?"); p.append(float(floor))
     for flt in filters or []:
-        f, op, v = q(flt["field"]), str(flt.get("op", "=")).lower(), flt.get("value")
+        if "field" not in flt:
+            raise ValueError("Each filter needs a 'field'.")
+        fname = flt["field"]
+        f, op = q(fname), str(flt.get("op", "=")).lower()
+        v = flt.get("value")
         if flt["field"] == "state" and op in ("=", "!=", "in"):
             for x in (v if isinstance(v, list) else [v]):
                 check_state(x)
         if op == "in":
-            vals = v if isinstance(v, list) else [v]
+            vals = [_coerce(fname, x) for x in (v if isinstance(v, list) else [v])]
             where.append(f"{f} IN ({', '.join('?' for _ in vals)})"); p.extend(vals)
         elif op == "contains":
+            if v is None:
+                raise ValueError(f"Filter on '{fname}' needs a value.")
             where.append(f"upper(CAST({f} AS VARCHAR)) LIKE ?"); p.append(f"%{str(v).upper()}%")
         elif op in OPS:
-            where.append(f"{f} {OPS[op]} ?"); p.append(v)
+            where.append(f"{f} {OPS[op]} ?"); p.append(_coerce(fname, v))
         else:
             raise ValueError("op must be one of = != > >= < <= in contains")
     order = f"ORDER BY {q(order_by)} {'DESC' if descending else 'ASC'} NULLS LAST" if order_by else ""
-    return run(f"SELECT {sel} FROM cu WHERE {' AND '.join(where)} {order} LIMIT {max(1, min(limit, MAX_ROWS))}", p)
+    rows = run(f"SELECT {sel} FROM cu WHERE {' AND '.join(where)} {order} LIMIT {limit + 1}", p)
+    more = len(rows) > limit
+    rows = rows[:limit]
+    if order_by and floor and floor > 0:
+        for r in rows:
+            r["assets_floor_applied"] = floor
+    if more:
+        rows.append({"truncated": True, "message": f"More than {limit} rows match. Raise limit (max {MAX_ROWS}) or narrow the filters."})
+    return rows
 
 
 class RateLimit:
