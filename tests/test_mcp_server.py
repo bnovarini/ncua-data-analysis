@@ -148,6 +148,47 @@ class Round3Regressions(unittest.TestCase):
         self.assertIn("floor_note", rows[0])
 
 
+class Round4Regressions(unittest.TestCase):
+    """Found by the fourth break-test round against hosted 0.1.5."""
+
+    def test_stopped_reporting_fallback_respects_filters(self):
+        rows = srv.find_credit_union(name="Velocity Community", state="NJ")
+        self.assertTrue(all(r.get("state") in (None, "NJ") for r in rows))
+        rows = srv.find_credit_union(name="Community", state="NJ", peer_group="$100M-$500M")
+        self.assertTrue(all(r.get("state") in (None, "NJ") for r in rows))
+        self.assertTrue(all("no_match" in r for r in rows))
+
+    def test_truncation_gives_total_and_pages(self):
+        a = srv.query_metrics(["name"], filters=[{"field": "state", "op": "=", "value": "TX"}], limit=100)
+        self.assertEqual(len(a), 101)
+        self.assertTrue(a[-1]["truncated"])
+        self.assertGreater(a[-1]["total_matching"], 100)
+        self.assertEqual(a[-1]["next_offset"], 100)
+        b = srv.query_metrics(["name"], filters=[{"field": "state", "op": "=", "value": "TX"}], limit=100, offset=100)
+        self.assertFalse({r["cu_number"] for r in a[:-1]} & {r["cu_number"] for r in b if "cu_number" in r})
+        with self.assertRaises(ValueError):
+            srv.query_metrics(["name"], offset=-1)
+
+    def test_list_fields_has_source_and_data_through(self):
+        r = srv.list_fields(search="net_income_quarter")[0]
+        self.assertIn("NCUA 5300", r["source"])
+        self.assertEqual(r["data_through"], srv.latest_quarter())
+
+    def test_full_state_names_work(self):
+        self.assertEqual(srv.check_state("Texas"), "TX")
+        self.assertEqual(srv.check_state("new jersey"), "NJ")
+        rows = srv.query_metrics(["members"], filters=[{"field": "state", "op": "=", "value": "Texas"}], limit=1)
+        self.assertEqual(rows[0]["cu_number"] > 0, True)
+
+    def test_older_same_name_credit_union_is_noted(self):
+        rows = srv.find_credit_union(name="Velocity Community")
+        self.assertEqual(rows[0]["cu_number"], 68749)
+        self.assertEqual(rows[0]["older_same_name"], [12458])
+
+    def test_no_match_says_us_only(self):
+        r = srv.find_credit_union(name="Cooperativa de Crédito")[0]
+        self.assertIn("US federally insured", r["no_match"])
+
 
 if __name__ == "__main__":
     unittest.main()
@@ -202,7 +243,7 @@ class BreakTestRegressions(unittest.TestCase):
 
     def test_bad_filters_are_rejected_not_silently_empty(self):
         with self.assertRaises(ValueError):
-            srv.metric_series("loan_to_share", state="Texas")
+            srv.metric_series("loan_to_share", state="Tx1")
         with self.assertRaises(ValueError):
             srv.metric_series("loan_to_share", peer_group=9)
         with self.assertRaises(ValueError):
