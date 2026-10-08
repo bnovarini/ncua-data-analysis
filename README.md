@@ -41,6 +41,8 @@ Output lands in `data/out/` as Parquet. Raw ZIPs are never committed. Links are 
 
 For June 2026 and December 2025 the totals reconcile to the figures in NCUA's Quarterly Credit Union Data Summary: credit union count, members, loans by type, shares, net worth ratio, delinquency, income and expense. 60 of 67 checks match across six year-ends (2021 to June 2026). The 7 that do not are historical deposit lines that differ by under $0.5B (under 0.1%), for example Dec 2025 money market $367.5B versus $368.0B published. All June 2026 lines match. The likely cause is restated history in NCUA's table, which has not been confirmed. Full table: [docs/RECONCILIATION.md](docs/RECONCILIATION.md).
 
+Earnings ratios were audited against all 32 quarterly summaries from 2018-Q3 to 2026-Q2. Pooled ROA, net interest margin and net charge-off ratio, and the median yield on loans, cost of funds, margin and ROA, match NCUA's published figures once the denominator is the average of prior-December and current balances (the `*_ncua_ytd` fields). Year-to-date annualized ratios step each January, in NCUA's own numbers too; the `*_quarterly` fields are single-quarter versions derived here, not published by NCUA. Details and the few mismatches: [docs/RATIO_AUDIT.md](docs/RATIO_AUDIT.md).
+
 Things to know before using it:
 
 - **Filter to `is_federally_insured`.** NCUA's raw files include about 85 state-chartered credit unions it does not insure. Its published totals leave them out.
