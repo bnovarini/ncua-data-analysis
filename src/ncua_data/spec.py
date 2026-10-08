@@ -89,6 +89,8 @@ FIELDS: list[Field] = [
     F("leases_receivable", "loan_portfolio", "stock", "002", "Leases receivable."),
     F("loans_new_vehicle", "loan_portfolio", "stock", "385", "New vehicle loans."),
     F("loans_used_vehicle", "loan_portfolio", "stock", "370", "Used vehicle loans."),
+    F("loans_new_vehicle_count", "loan_portfolio", "count", "958", "Number of new vehicle loans outstanding (vehicle pledged as security)."),
+    F("loans_used_vehicle_count", "loan_portfolio", "count", "968", "Number of used vehicle loans outstanding (vehicle pledged as security)."),
     F("loans_credit_card", "loan_portfolio", "stock", "396", "Unsecured credit card loans."),
     F("loans_other_unsecured", "loan_portfolio", "stock", "397", "All other unsecured loans and lines of credit."),
     F("loans_payday_alternative", "loan_portfolio", "stock", "397A", "Payday alternative loans (PAL), federal credit unions only."),
