@@ -71,6 +71,8 @@ Every check compares a total computed from this dataset (federally insured credi
 | 2026-06 | IRA/Keogh accounts ($B) | 87.93 | 87.9 | match |
 | 2026-06 | non-member deposits ($B) | 24.129 | 24.1 | match |
 | 2026-06 | employee compensation, annualized ($B) | 41.114 | 41.1 | match |
+| 2026-06 | number of loans outstanding (millions) | 88.588 | 88.6 | match |
+| 2025-12 | number of loans outstanding (millions) | 88.73 | 88.7 | match |
 
 Sources: https://ncua.gov/files/publications/analysis/quarterly-data-summary-2025-Q4.pdf, https://ncua.gov/files/publications/analysis/quarterly-data-summary-2026-Q2.pdf
 
@@ -79,3 +81,5 @@ Sources: https://ncua.gov/files/publications/analysis/quarterly-data-summary-202
 - **Seven historical deposit lines** (Dec 2022 regular shares and non-member deposits, Dec 2023 regular shares, Dec 2024 share drafts, Dec 2025 share drafts, money market and certificates) differ from NCUA's table by under $0.5B. Possible cause: restated history in NCUA's table versus the as-filed ZIPs. Not confirmed.
 - **Net worth ratio** matches only after subtracting the CECL transition provision, as NCUA does from 2023.
 - **ROA, net interest margin % and net charge-off ratio** are not checked here because NCUA divides by its own average balances, which are not published. For June 2026 NCUA reports NIM 3.49% of average assets and a 78bp net charge-off ratio. A four-quarter average of quarter-end balances lands within 1 to 2bp of NCUA on these ratios.
+- **Vehicle loan counts** (`loans_new_vehicle_count`, `loans_used_vehicle_count`, Acct_958 and Acct_968) have no published NCUA aggregate to compare with. NCUA publishes only the total number of loans outstanding (checked above, from the same call report loan-count family). The vehicle counts are tested against the raw call report accounts and never exceed the total loan count for any credit union.
+- **Vehicle loan originations are not in the call report.** The only loans-granted accounts are the total (Acct_031A count, Acct_031B dollars), payday alternative loans and some business and real estate lines. None is specific to vehicle loans, so there is no field for auto originations.
