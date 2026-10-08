@@ -383,6 +383,10 @@ def find_credit_union(
             amb = len(out) > 1
         for r in out:
             r["ambiguous"] = amb
+            if r["match"] == "abbreviation":
+                # initials can belong to a different credit union than the one the user means
+                r["ambiguous"] = True
+                r["note"] = "Matched on initials only. Confirm this is the credit union meant before using it."
         return out
     # Nothing in this quarter. Is it a credit union that stopped reporting?
     gone = []
