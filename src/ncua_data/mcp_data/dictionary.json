@@ -1199,7 +1199,7 @@
  {
   "table_name": "metrics",
   "column_name": "net_chargeoff_rate_avg_loans_4q",
-  "description": "Same, over the average of the last four quarter-end loan balances. Closest to NCUA's published ratio but not identical.",
+  "description": "Net charge-offs annualized from year to date, over the average of the last four quarter-end loans. NCUA publishes the ratio on a different average; see net_chargeoff_rate_ncua_ytd.",
   "kind": "ratio",
   "category": "derived"
  },
@@ -1213,42 +1213,42 @@
  {
   "table_name": "metrics",
   "column_name": "roa_year_end_assets",
-  "description": "Net income annualized over year-end assets.",
+  "description": "Return on assets: net income annualized from year to date, over year-end assets.",
   "kind": "ratio",
   "category": "derived"
  },
  {
   "table_name": "metrics",
   "column_name": "roa_avg_assets_4q",
-  "description": "Net income annualized over the average of the last four quarter-end assets. NCUA's own denominator is not public, so this can differ by a few basis points.",
+  "description": "Return on assets: net income annualized from year to date, over the average of the last four quarter-end assets. Prefer roa_ncua_ytd, which uses NCUA's own average.",
   "kind": "ratio",
   "category": "derived"
  },
  {
   "table_name": "metrics",
   "column_name": "nim_year_end_assets",
-  "description": "(Interest income minus interest expense) annualized over year-end assets.",
+  "description": "Net interest margin: (interest income minus interest expense) annualized from year to date, over year-end assets.",
   "kind": "ratio",
   "category": "derived"
  },
  {
   "table_name": "metrics",
   "column_name": "nim_avg_assets_4q",
-  "description": "Same, over four-quarter average assets. NCUA publishes 3.49% for June 2026; this gives about 3.5%.",
+  "description": "Net interest margin (NIM): same, over the four-quarter average of assets. Prefer nim_ncua_ytd, which matches NCUA's published 3.49% for June 2026 exactly in aggregate.",
   "kind": "ratio",
   "category": "derived"
  },
  {
   "table_name": "metrics",
   "column_name": "loan_yield",
-  "description": "Interest on loans annualized over year-end loans.",
+  "description": "Yield on loans: interest on loans annualized from year to date, over year-end loans. Lags in rising-rate years; loan_yield_ncua_ytd uses NCUA's average balance.",
   "kind": "ratio",
   "category": "derived"
  },
  {
   "table_name": "metrics",
   "column_name": "cost_of_shares",
-  "description": "Total interest expense annualized over shares and deposits.",
+  "description": "Cost of shares: total interest expense annualized from year to date, over shares and deposits. Not NCUA's cost of funds; see cost_of_funds_ncua_ytd.",
   "kind": "ratio",
   "category": "derived"
  },
@@ -1305,6 +1305,90 @@
   "table_name": "metrics",
   "column_name": "provision_quarter",
   "description": "Provision for loan losses for the single quarter.",
+  "kind": "dollars",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "roa_ncua_ytd",
+  "description": "Return on average assets on NCUA's basis: year-to-date net income annualized, over the average of prior-December and current quarter-end assets. Pooled across all insured credit unions it reproduces NCUA's published ROA to within a basis point for every quarter 2019-2026.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "nim_ncua_ytd",
+  "description": "Net interest margin (NIM) on NCUA's basis: (interest income minus interest expense) annualized from year to date, over the average of prior-December and current assets. Pooled, it reproduces NCUA's published NIM percentage.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "loan_yield_ncua_ytd",
+  "description": "Yield on loans on NCUA's basis: interest on loans annualized from year to date, over the average of prior-December and current loans. The median across credit unions reproduces NCUA's published median yield on loans.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "cost_of_funds_ncua_ytd",
+  "description": "Cost of funds on NCUA's basis: total interest expense annualized from year to date, over the average of prior-December and current assets. The median reproduces NCUA's published median cost of funds.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "net_chargeoff_rate_ncua_ytd",
+  "description": "Net charge-off rate on NCUA's basis: (charge-offs minus recoveries) annualized from year to date, over the average of prior-December and current loans. Pooled, it matches NCUA's published ratio within a basis point.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "roa_quarterly",
+  "description": "Return on assets for the single quarter: the quarter's net income times 4, over the average of prior and current quarter-end assets. Derived here; NCUA does not publish quarterly-only ratios. No January step.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "nim_quarterly",
+  "description": "Net interest margin (NIM) for the single quarter: (interest income minus expense) for the quarter times 4, over the average of prior and current quarter-end assets. Derived here; not an NCUA published ratio. No January step.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "loan_yield_quarterly",
+  "description": "Yield on loans for the single quarter: the quarter's interest on loans times 4, over the average of prior and current quarter-end loans. Derived here; not an NCUA published ratio.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "cost_of_funds_quarterly",
+  "description": "Cost of funds for the single quarter: the quarter's interest expense times 4, over the average of prior and current quarter-end assets. Derived here; not an NCUA published ratio.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "net_chargeoff_rate_quarterly",
+  "description": "Net charge-off rate for the single quarter: the quarter's (charge-offs minus recoveries) times 4, over the average of prior and current quarter-end loans. Derived here; not an NCUA published ratio.",
+  "kind": "ratio",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "interest_on_loans_quarter",
+  "description": "Interest on loans for the single quarter (year-to-date minus prior quarter).",
+  "kind": "dollars",
+  "category": "derived"
+ },
+ {
+  "table_name": "metrics",
+  "column_name": "net_chargeoffs_quarter",
+  "description": "Charge-offs minus recoveries for the single quarter.",
   "kind": "dollars",
   "category": "derived"
  }
