@@ -20,6 +20,8 @@ from typing import Any, Optional
 import duckdb
 from mcp.server.fastmcp import FastMCP
 
+from .extras import EXTRA_COLUMNS, extras_sql
+
 RELEASE = "v0.1.1"  # data release; unchanged in 0.1.2
 BASE_URL = f"https://github.com/bnovarini/ncua-data-analysis/releases/download/{RELEASE}/"
 FILES = [
@@ -86,7 +88,17 @@ def con() -> duckdb.DuckDBPyConnection:
         g = lambda p: str(d / p)
         c.execute(f"CREATE VIEW dim AS SELECT * FROM read_parquet('{g('dim_credit_union.parquet')}')")
         c.execute(f"CREATE VIEW fact AS SELECT * FROM read_parquet('{g('fact_call_report_curated_*.parquet')}')")
-        c.execute(f"CREATE VIEW met AS SELECT * FROM read_parquet('{g('metrics_*.parquet')}')")
+        c.execute(f"CREATE VIEW met_base AS SELECT * FROM read_parquet('{g('metrics_*.parquet')}')")
+        have = {r[0] for r in c.execute("DESCRIBE met_base").fetchall()}
+        missing = [x for x in EXTRA_COLUMNS if x not in have]
+        if missing:
+            # Earnings ratios on NCUA's denominators and single-quarter versions are computed here from the fact table.
+            c.execute("CREATE TABLE met_x AS SELECT quarter, cu_number, " + ", ".join(f'"{x}"' for x in missing)
+                      + " FROM (" + extras_sql("fact") + ")")
+            c.execute("CREATE VIEW met AS SELECT b.*, x.* EXCLUDE (quarter, cu_number) FROM met_base b "
+                      "LEFT JOIN met_x x USING (quarter, cu_number)")
+        else:
+            c.execute("CREATE VIEW met AS SELECT * FROM met_base")
         c.execute(
             "CREATE VIEW cu AS SELECT dim.*, fact.* EXCLUDE (quarter, cu_number), met.* EXCLUDE (quarter, cu_number) "
             "FROM dim JOIN fact USING (quarter, cu_number) JOIN met USING (quarter, cu_number)"
@@ -126,14 +138,28 @@ def latest_quarter() -> str:
 
 def _unknown_field_message(name: str) -> str:
     low = str(name).lower()
+    key = re.sub(r"[^a-z0-9]+", "_", low).strip("_")
     msg = f"Unknown field '{name}': it is not in this dataset."
     if any(k in low for k in ("originat", "funded", "produc")) or (("auto" in low or "vehicle" in low) and "granted" in low):
         msg += (" Loan originations by loan type are not in the NCUA call report. What exists: loans_granted_ytd and "
                 "loans_granted_count_ytd (all loan types combined, year to date), and balances and counts of vehicle loans "
                 "outstanding (loans_new_vehicle, loans_used_vehicle, loans_new_vehicle_count, loans_used_vehicle_count).")
-    elif "margin" in low or "profit" in low:
-        msg += (" 'Profit margin' is not a call report metric. Closest: roa_avg_assets_4q or roa_year_end_assets "
-                "(net income / assets), net_income_ytd, efficiency_ratio, nim_avg_assets_4q. Say which one you used.")
+    elif key in ("nim", "net_interest_margin", "interest_margin", "net_interest_margin_pct", "nim_pct", "net_interest_margin_percent"):
+        msg += (" Net interest margin is in this dataset under another name: nim_ncua_ytd (NCUA's published basis: "
+                "year-to-date annualized over the average of prior-December and current assets), nim_avg_assets_4q, "
+                "nim_year_end_assets, or nim_quarterly (single quarter). Say which one you used.")
+    elif key in ("capital_ratio", "capital_adequacy", "capital_adequacy_ratio", "capital", "tier_1", "tier1", "tier_1_capital_ratio",
+                 "leverage_ratio", "regulatory_capital", "capital_to_assets"):
+        msg += (" Credit unions report net worth, not bank-style capital ratios. The capital ratio NCUA publishes is "
+                "net_worth_ratio_ex_cecl (net worth over assets, fraction). net_worth_to_assets includes the CECL "
+                "transition provision from 2023.")
+    elif key in ("roe", "return_on_equity", "return_on_equity_pct", "return_on_capital"):
+        msg += (" Return on equity is not a call report metric: credit unions have no shareholder equity. Closest: "
+                "roa_ncua_ytd (matches NCUA's published return on average assets) for earnings, net_worth_ratio_ex_cecl "
+                "for capital. Say which one you used.")
+    elif "profit" in low or ("margin" in low and "interest" not in low):
+        msg += (" 'Profit margin' is not a call report metric. Closest: roa_ncua_ytd or roa_avg_assets_4q "
+                "(net income / assets), net_income_ytd, efficiency_ratio, nim_ncua_ytd (net interest margin). Say which one you used.")
     elif any(k in low for k in ("best", "worst", "rank", "score", "rating", "top")):
         msg += (" There is no single 'best' measure. Pick explicit metrics (for example roa_avg_assets_4q, "
                 "delinquency_rate, efficiency_ratio, net_worth_to_assets) and say which one you ranked on.")
@@ -254,6 +280,20 @@ NOTE = (
 mcp = FastMCP("ncua-data-analysis", instructions=NOTE)
 
 
+SEARCH_ALIASES = {
+    "net interest margin": ["nim_"], "nim": ["nim_"], "interest margin": ["nim_"],
+    "capital ratio": ["net_worth_ratio"], "capital adequacy": ["net_worth_ratio"], "capital": ["net_worth_ratio"],
+    "cost of funds": ["cost_of_funds"], "return on assets": ["roa_"], "roa": ["roa_"],
+    "yield": ["loan_yield"], "return on equity": ["roa_", "net_worth_ratio"], "roe": ["roa_", "net_worth_ratio"],
+}
+
+
+def _search_terms(search: str) -> list[str]:
+    low = search.lower().strip()
+    key = re.sub(r"[^a-z0-9]+", " ", low).strip()
+    return [low] + SEARCH_ALIASES.get(key, [])
+
+
 @mcp.tool(
     description=(
         "List available fields with plain-language definitions from the data dictionary. "
@@ -270,7 +310,7 @@ def list_fields(table: Optional[str] = None, search: Optional[str] = None, limit
     for t, c, d, k, cat in _DICT:
         if table and t != table:
             continue
-        if search and search.lower() not in f"{c} {d} {cat or ''}".lower():
+        if search and not any(term in f"{c} {d} {cat or ''}".lower() for term in _search_terms(search)):
             continue
         row = {"table": t, "field": c, "kind": k, "category": cat, "description": d,
                "source": _SOURCES.get(t, "NCUA call report data"), "data_through": latest_quarter()}
@@ -476,11 +516,16 @@ def credit_union_profile(cu_number: int, quarter: Optional[str] = None) -> dict:
     if not rows:
         return no_data_error(cu_number, qt)
     r = rows[0]
-    former = [x["name"] for x in run("SELECT DISTINCT name FROM dim WHERE cu_number = ? AND name <> ?", [cu_number, r["name"]])]
+    hist = run("SELECT name, min(quarter) AS first_quarter, max(quarter) AS last_quarter FROM dim WHERE cu_number = ? "
+               "AND name <> ? GROUP BY name ORDER BY min(quarter)", [cu_number, r["name"]])
+    former = [h["name"] for h in hist if h["last_quarter"] < qt]
+    later = [h["name"] for h in hist if h["first_quarter"] > qt]
     keep_fact = ["total_assets", "loans_and_leases_total", "total_shares", "members", "net_worth", "net_income_ytd"]
     return {
         "attributes": {k: r[k] for k in DIM_NAMES if k in r},
         "former_names": former,
+        "later_names": later,
+        "name_history": hist,
         "quarter": qt,
         "key_amounts": {k: r[k] for k in keep_fact if k in r},
         "metrics": {k: r[k] for k in METRIC_NAMES if k in r},
@@ -488,6 +533,8 @@ def credit_union_profile(cu_number: int, quarter: Optional[str] = None) -> dict:
     }
 
 
+SERIES_WARN_ROWS = 250
+SERIES_MAX_ROWS = 1000
 SUMMABLE = ("dollars", "stock", "count", "ytd")
 CECL_NOTE = ("Accounting break: most credit unions adopted CECL in 2023. Allowance and provision levels step up around "
              "2023-03 because of the accounting change, not credit deterioration. Do not read the jump as a trend.")
@@ -498,7 +545,43 @@ CORPORATE_NOTE = ("Corporate credit unions are not in this dataset (federally in
 EXCECL_NOTE = ("Accounting break: most credit unions adopted CECL in 2023-03. The day-one adoption adjustment can lower "
                "an individual credit union's net worth ratio at the break, so a step down here can be an accounting "
                "change, not performance.")
+REBASE = ("Annualized from year-to-date flow, so this ratio re-bases every January: Q4 averages the whole year, Q1 is one "
+          "quarter, so a fast rate cycle shows as a step between Q4 and Q1 (NCUA's own published year-to-date ratios step "
+          "the same way). ")
+_ALT = {
+    "roa": ("roa_ncua_ytd", "roa_quarterly"), "nim": ("nim_ncua_ytd", "nim_quarterly"),
+    "loan_yield": ("loan_yield_ncua_ytd", "loan_yield_quarterly"),
+    "cost_of_shares": ("cost_of_funds_ncua_ytd", "cost_of_funds_quarterly"),
+    "net_chargeoff_rate": ("net_chargeoff_rate_ncua_ytd", "net_chargeoff_rate_quarterly"),
+}
+
+
+def _rebase_note(kind: str) -> str:
+    a, b = _ALT[kind]
+    return REBASE + f"For a series without the January step use {b} (single quarter); {a} matches NCUA's published basis."
+
+
+_REBASE_NOTES = {
+    "roa_year_end_assets": _rebase_note("roa"), "roa_avg_assets_4q": _rebase_note("roa"),
+    "nim_year_end_assets": _rebase_note("nim"), "nim_avg_assets_4q": _rebase_note("nim"),
+    "loan_yield": _rebase_note("loan_yield"), "cost_of_shares": _rebase_note("cost_of_shares"),
+    "net_chargeoff_rate": _rebase_note("net_chargeoff_rate"), "net_chargeoff_rate_avg_loans_4q": _rebase_note("net_chargeoff_rate"),
+    "roa_ncua_ytd": REBASE + "roa_quarterly is the single-quarter version.",
+    "nim_ncua_ytd": REBASE + "nim_quarterly is the single-quarter version.",
+    "loan_yield_ncua_ytd": REBASE + "loan_yield_quarterly is the single-quarter version.",
+    "cost_of_funds_ncua_ytd": REBASE + "cost_of_funds_quarterly is the single-quarter version.",
+    "net_chargeoff_rate_ncua_ytd": REBASE + "net_chargeoff_rate_quarterly is the single-quarter version.",
+    "opex_to_assets": REBASE + "There is no single-quarter version; non_interest_expense_quarter has the quarter's dollars.",
+    "provision_to_loans": REBASE + "provision_quarter has the quarter's dollars.",
+    "compensation_per_fte": REBASE, "operating_expense_per_fte": REBASE,
+}
+_QUARTERLY_NOTE = ("Single-quarter flow times 4 over the average of the prior and current quarter-end balance. Derived by this "
+                   "project: NCUA publishes only year-to-date figures, so this is not an NCUA published ratio. It is consistent "
+                   "with NCUA's year-to-date totals (see docs/RECONCILIATION.md).")
 FIELD_NOTES = {
+    **_REBASE_NOTES,
+    "roa_quarterly": _QUARTERLY_NOTE, "nim_quarterly": _QUARTERLY_NOTE, "loan_yield_quarterly": _QUARTERLY_NOTE,
+    "cost_of_funds_quarterly": _QUARTERLY_NOTE, "net_chargeoff_rate_quarterly": _QUARTERLY_NOTE,
     "allowance_to_loans": CECL_NOTE, "allowance_for_credit_losses": CECL_NOTE, "provision_to_loans": CECL_NOTE,
     "provision_quarter": CECL_NOTE, "provision_for_loan_losses_ytd": CECL_NOTE,
     "net_worth_to_assets": NETWORTH_NOTE, "net_worth": NETWORTH_NOTE, "net_worth_ratio_ex_cecl": EXCECL_NOTE,
@@ -525,6 +608,23 @@ POOLED = {
     "cost_of_shares": "sum(interest_expense_ytd) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) / nullif(sum(total_shares_and_deposits), 0)",
     "opex_to_assets": "sum(non_interest_expense_ytd) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) / nullif(sum(total_assets), 0)",
 }
+# Pooled versions of the NCUA-basis and single-quarter ratios. (numerator expression over cu rows, balance column).
+# Year-to-date flows over the average of (prior December, now) system balances; quarterly flows over (prior quarter, now).
+POOLED_NCUA = {
+    "roa_ncua_ytd": ("sum(net_income_ytd)", "total_assets", "ytd"),
+    "nim_ncua_ytd": ("sum(interest_income_ytd) - sum(interest_expense_ytd)", "total_assets", "ytd"),
+    "loan_yield_ncua_ytd": ("sum(interest_on_loans_ytd)", "loans_and_leases_total", "ytd"),
+    "cost_of_funds_ncua_ytd": ("sum(interest_expense_ytd)", "total_assets", "ytd"),
+    "net_chargeoff_rate_ncua_ytd": ("sum(chargeoffs_ytd) - sum(recoveries_ytd)", "loans_and_leases_total", "ytd"),
+    "roa_quarterly": ("sum(net_income_quarter)", "total_assets", "quarterly"),
+    "nim_quarterly": ("sum(interest_income_quarter) - sum(interest_expense_quarter)", "total_assets", "quarterly"),
+    "loan_yield_quarterly": ("sum(interest_on_loans_quarter)", "loans_and_leases_total", "quarterly"),
+    "cost_of_funds_quarterly": ("sum(interest_expense_quarter)", "total_assets", "quarterly"),
+    "net_chargeoff_rate_quarterly": ("sum(net_chargeoffs_quarter)", "loans_and_leases_total", "quarterly"),
+}
+_PRIOR_DEC = "cast(cast(left({q}, 4) AS INTEGER) - 1 AS VARCHAR) || '-12'"
+_PRIOR_Q = ("CASE right({q}, 2) WHEN '03' THEN cast(cast(left({q}, 4) AS INTEGER) - 1 AS VARCHAR) || '-12' "
+            "WHEN '06' THEN left({q}, 4) || '-03' WHEN '09' THEN left({q}, 4) || '-06' ELSE left({q}, 4) || '-09' END")
 # Same-credit-union growth: sum(now) / sum(a year ago) - 1, over credit unions present in both quarters.
 POOLED_GROWTH = {
     "asset_growth_yoy": "total_assets", "loan_growth_yoy": "loans_and_leases_total",
@@ -544,7 +644,10 @@ AGGS = ("median", "mean", "sum", "count", "ratio_of_sums", "pooled")
         "(the system-wide version of a ratio metric: total numerators over total denominators, not a median of "
         "credit unions; available for efficiency_ratio, delinquency_rate, loan_to_share, loans_to_assets, "
         "net_worth_to_assets, net_worth_ratio_ex_cecl, allowance_to_loans, mix_auto, net_chargeoff_rate, "
-        "roa_year_end_assets, nim_year_end_assets, loan_yield, cost_of_shares, opex_to_assets and the growth metrics "
+        "roa_year_end_assets, nim_year_end_assets, loan_yield, cost_of_shares, opex_to_assets, the NCUA-basis ratios "
+        "(roa_ncua_ytd, nim_ncua_ytd, loan_yield_ncua_ytd, cost_of_funds_ncua_ytd, net_chargeoff_rate_ncua_ytd; pooled "
+        "values reproduce NCUA's published ROA, NIM and net charge-off ratio), the single-quarter ratios (roa_quarterly "
+        "and the like) and the growth metrics "
         "asset/loan/share/member_growth_yoy, which compare the same credit unions a year apart). Median and mean "
         "treat every credit union equally, tiny ones included. Year-to-date fields (basis year_to_date in "
         "list_fields: income, expenses, charge-offs, loans granted) are returned per quarter by default "
@@ -624,6 +727,20 @@ def metric_series(
                 r["peer_group_label"] = PEER_LABELS[r["peer_group"]]
         if rows and is_ytd and not use_q:
             rows[0]["warning"] = YTD_WARNING
+        if rows and field in _REBASE_NOTES:
+            rows[0]["annualization_note"] = _REBASE_NOTES[field]
+        elif rows and field in FIELD_NOTES and field.endswith("_quarterly"):
+            rows[0]["annualization_note"] = FIELD_NOTES[field]
+        if len(rows) > SERIES_MAX_ROWS:
+            raise ValueError(
+                f"This would return {len(rows)} rows (about {len(rows) * 80 // 1000} KB), over the {SERIES_MAX_ROWS}-row limit. "
+                "Narrow it: set start and end, use year_end_only=true, filter by state or peer_group, or drop group_by "
+                "and aggregate. For a ranking, group_by with a single quarter returns one row per group.")
+        if len(rows) > SERIES_WARN_ROWS:
+            first = rows[0]
+            first["warning"] = ((first.get("warning") + " ") if first.get("warning") else "") + (
+                f"Large result: {len(rows)} rows (about {len(rows) * 80 // 1000} KB). Use year_end_only=true, a shorter "
+                "start-end range, or fewer groups if you only need a trend.")
         return rows
 
     if cu_number is not None:
@@ -664,9 +781,27 @@ def metric_series(
                 f"SELECT quarter, {gcol}sum(CASE WHEN {ok} THEN cur END) / nullif(sum(CASE WHEN {ok} THEN prior END), 0) - 1 AS value, "
                 f"count(CASE WHEN {ok} THEN 1 END) AS n_credit_unions FROM s WHERE {' AND '.join(rng)} {tail}",
                 p + rng_p), True)
+        if field in POOLED_NCUA:
+            num, bal, mode = POOLED_NCUA[field]
+            prior = (_PRIOR_DEC if mode == "ytd" else _PRIOR_Q).format(q="c.quarter")
+            factor = "(4.0 / (cast(right(c.quarter, 2) AS INTEGER) / 3))" if mode == "ytd" else "4.0"
+            gj = f" AND pr.{group_by} = c.{group_by}" if group_by else ""
+            gsel = f"c.{group_by}, " if group_by else ""
+            rows = run(
+                f"WITH c AS (SELECT quarter, {gcol}{num} AS num, sum({bal}) AS bal, count(*) AS n FROM cu "
+                f"WHERE {' AND '.join(where + rng)} GROUP BY {gb}), "
+                f"pr AS (SELECT quarter, {gcol}sum({bal}) AS bal FROM cu WHERE {' AND '.join(where)} GROUP BY {gb}) "
+                f"SELECT c.quarter, {gsel}c.num * {factor} / nullif((c.bal + pr.bal) / 2, 0) AS value, c.n AS n_credit_unions "
+                f"FROM c LEFT JOIN pr ON pr.quarter = {prior}{gj} ORDER BY c.quarter{', value DESC' if group_by else ''}",
+                p + rng_p + p)
+            for r in rows:
+                if r["value"] is None and r["n_credit_unions"]:
+                    r["note"] = ("No value: this ratio needs the prior " + ("December" if mode == "ytd" else "quarter-end")
+                                 + " balance, which is before the first quarter in the data (2018-03).")
+            return finish(rows, True)
         if field not in POOLED:
             raise ValueError(f"No pooled version of '{field}'. Pooled is available for: "
-                             + ", ".join(sorted(list(POOLED) + list(POOLED_GROWTH))) + ".")
+                             + ", ".join(sorted(list(POOLED) + list(POOLED_NCUA) + list(POOLED_GROWTH))) + ".")
         return finish(run(
             f"SELECT quarter, {gcol}{POOLED[field]} AS value, count(*) AS n_credit_unions FROM cu "
             f"WHERE {' AND '.join(where + rng)} {tail}", p + rng_p), True)
