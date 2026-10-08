@@ -85,11 +85,11 @@ Tools: `list_fields`, `find_credit_union`, `credit_union_profile`, `metric_serie
 
 ## Download
 
-Ready-made Parquet files are attached to the [v0.1 release](https://github.com/bnovarini/ncua-data-analysis/releases/tag/v0.1). GitHub caps release files at 25 MB, so `fact_call_report_curated` and `metrics` come in three parts by year (2018-2020, 2021-2023, 2024-2026) with identical columns:
+Ready-made Parquet files are attached to the [v0.1.1 release](https://github.com/bnovarini/ncua-data-analysis/releases/tag/v0.1.1). GitHub caps release files at 25 MB, so `fact_call_report_curated` and `metrics` come in three parts by year (2018-2020, 2021-2023, 2024-2026) with identical columns:
 
 ```python
 import duckdb
-base = "https://github.com/bnovarini/ncua-data-analysis/releases/download/v0.1/"
+base = "https://github.com/bnovarini/ncua-data-analysis/releases/download/v0.1.1/"
 parts = [base + f"metrics_{y}.parquet" for y in ("2018_2020", "2021_2023", "2024_2026")]
 duckdb.sql(f"SELECT quarter, count(*) FROM read_parquet({parts}) GROUP BY 1 ORDER BY 1").show()
 ```
