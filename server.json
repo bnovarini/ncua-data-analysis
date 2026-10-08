@@ -3,7 +3,7 @@
   "name": "io.github.bnovarini/ncua-data-analysis",
   "title": "NCUA credit union data",
   "description": "NCUA call report data for US credit unions, 2018-2026: profiles, peer comparison, time series.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "repository": {
     "url": "https://github.com/bnovarini/ncua-data-analysis",
     "source": "github"
