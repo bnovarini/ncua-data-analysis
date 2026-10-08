@@ -9,6 +9,7 @@ import difflib
 import json
 import os
 import re
+import unicodedata
 import sys
 import threading
 import time
@@ -171,10 +172,28 @@ def check_state(state: Optional[str]) -> Optional[str]:
     return st
 
 
-def check_peer_group(pg: Optional[int]) -> Optional[int]:
-    if pg is not None and pg not in (1, 2, 3, 4, 5, 6):
-        raise ValueError(f"peer_group must be 1 to 6 (1 smallest, 6 = $500M+), got {pg}.")
-    return pg
+PEER_LABELS = {1: "under $2M", 2: "$2M-$10M", 3: "$10M-$50M", 4: "$50M-$100M", 5: "$100M-$500M", 6: "$500M+"}
+_PEER_HELP = "peer_group is 1 to 6: " + ", ".join(f"{k} = {v}" for k, v in PEER_LABELS.items())
+
+
+def check_peer_group(pg: Any) -> Optional[int]:
+    """Accept the code (1-6) or its asset-size label ('$100M-$500M')."""
+    if pg is None:
+        return None
+    if isinstance(pg, str):
+        t = pg.strip().lower().replace(" ", "")
+        for k, v in PEER_LABELS.items():
+            if t in (v.lower().replace(" ", ""), str(k)):
+                return k
+        raise ValueError(f"peer_group '{pg}' not recognised. {_PEER_HELP}.")
+    if isinstance(pg, bool) or pg not in PEER_LABELS:
+        raise ValueError(f"peer_group must be one of the codes or labels. {_PEER_HELP}; got {pg}.")
+    return int(pg)
+
+
+def _fold(text: str) -> str:
+    """Strip accents so 'Señor' and 'Económica' match the ASCII forms NCUA data uses."""
+    return "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
 
 
 def last_reported(cu_number: int) -> Optional[dict]:
@@ -250,7 +269,7 @@ _STOP = r"\b(federal|credit|union|fcu|cu|the)\b"
 
 def _norm_sql(col: str) -> str:
     return (
-        f"trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(lower({col}), '[.'']', '', 'g'), "
+        f"trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(strip_accents(lower({col})), '[.'']', '', 'g'), "
         f"'[^a-z0-9 ]', ' ', 'g'), '{_STOP}', ' ', 'g'), '\\s+', ' ', 'g'))"
     )
 
@@ -267,7 +286,7 @@ ALIASES = {
 
 def normalize_name(text: str) -> str:
     """Lowercase, drop punctuation and the words federal/credit/union/fcu/cu/the, collapse spaces."""
-    t = re.sub(r"[^a-z0-9 ]", " ", re.sub(r"[.']", "", text.lower()))
+    t = re.sub(r"[^a-z0-9 ]", " ", re.sub(r"[.']", "", _fold(text).lower()))
     t = re.sub(_STOP, " ", t)
     return re.sub(r"\s+", " ", t).strip()
 
@@ -290,7 +309,7 @@ def find_credit_union(
     name: Optional[str] = None,
     state: Optional[str] = None,
     charter_type: Optional[str] = None,
-    peer_group: Optional[int] = None,
+    peer_group: Optional[int | str] = None,
     quarter: Optional[str] = None,
     limit: int = 15,
 ) -> list[dict]:
@@ -353,8 +372,8 @@ def find_credit_union(
                     seen[r["cu_number"]] = r
     if not seen and qn:
         # Abbreviations and partial words: "Navy Fed" (words are prefixes of the full legal name), "NFCU" (initials).
-        raw = "trim(regexp_replace(regexp_replace(lower(name), '[^a-z0-9 ]', ' ', 'g'), '\\s+', ' ', 'g'))"
-        words = [w for w in re.sub(r"[^a-z0-9 ]", " ", name.lower()).split() if w]
+        raw = "trim(regexp_replace(regexp_replace(strip_accents(lower(name)), '[^a-z0-9 ]', ' ', 'g'), '\\s+', ' ', 'g'))"
+        words = [w for w in re.sub(r"[^a-z0-9 ]", " ", _fold(name).lower()).split() if w]
         conds, cp = [], []
         for w in words:
             conds.append(f"contains({raw}, ?)"); cp.append(w)
@@ -377,11 +396,12 @@ def find_credit_union(
         if exact or starts:
             # one clear exact match is not made ambiguous by former-name hits; anything else that overlaps is
             amb = not (len(exact) == 1 and not starts) and len(exact) + len(starts) + len(former) > 1
-        elif former:
-            amb = len(former) > 1
         else:
             amb = len(out) > 1
+        corp = bool(re.search(r"\bcorporate\b", _fold(name).lower()))
         for r in out:
+            if corp:
+                r["note"] = CORPORATE_NOTE
             r["ambiguous"] = amb
             if r["match"] == "abbreviation":
                 # initials can belong to a different credit union than the one the user means
@@ -400,9 +420,10 @@ def find_credit_union(
         return [{"no_match": f"No federally insured credit union matches '{name}' in {qt}, but these stopped reporting "
                              "earlier (merged, closed, or left federal insurance). Use their cu_number with quarter set to "
                              "the last reported quarter, and tell the user they are no longer reporting.", **g} for g in gone]
+    extra_note = (" " + CORPORATE_NOTE) if re.search(r"\bcorporate\b", _fold(name).lower()) else ""
     return [{"no_match": f"No federally insured credit union matches '{name}' in {qt}. NCUA lists legal names, which can "
                          "differ from the brand name (BECU is listed as BOEING EMPLOYEES). Try a shorter or different part "
-                         "of the name, or search by state."}]
+                         "of the name, or search by state." + extra_note}]
 
 
 @mcp.tool(
@@ -434,10 +455,15 @@ CECL_NOTE = ("Accounting break: most credit unions adopted CECL in 2023. Allowan
              "2023-03 because of the accounting change, not credit deterioration. Do not read the jump as a trend.")
 NETWORTH_NOTE = ("From 2023 this includes the CECL transition provision. NCUA's published net worth ratio is "
                  "net_worth_ratio_ex_cecl.")
+CORPORATE_NOTE = ("Corporate credit unions are not in this dataset (federally insured natural-person credit unions "
+                  "only). This is a name match, not a corporate credit union.")
+EXCECL_NOTE = ("Accounting break: most credit unions adopted CECL in 2023-03. The day-one adoption adjustment can lower "
+               "an individual credit union's net worth ratio at the break, so a step down here can be an accounting "
+               "change, not performance.")
 FIELD_NOTES = {
     "allowance_to_loans": CECL_NOTE, "allowance_for_credit_losses": CECL_NOTE, "provision_to_loans": CECL_NOTE,
     "provision_quarter": CECL_NOTE, "provision_for_loan_losses_ytd": CECL_NOTE,
-    "net_worth_to_assets": NETWORTH_NOTE, "net_worth": NETWORTH_NOTE,
+    "net_worth_to_assets": NETWORTH_NOTE, "net_worth": NETWORTH_NOTE, "net_worth_ratio_ex_cecl": EXCECL_NOTE,
     "net_worth_ratio_pct_x100": "UNITS: hundredths of a percent (1165 = 11.65%). Prefer net_worth_ratio_ex_cecl, a fraction (0.1165 = 11.65%).",
 }
 CECL_BREAK_QUARTER = "2023-03"
@@ -495,7 +521,7 @@ def metric_series(
     field: str,
     cu_number: Optional[int] = None,
     state: Optional[str] = None,
-    peer_group: Optional[int] = None,
+    peer_group: Optional[int | str] = None,
     start: Optional[str] = None,
     end: Optional[str] = None,
     aggregate: Optional[str] = None,
@@ -507,6 +533,8 @@ def metric_series(
 ) -> list[dict]:
     f = q(field)
     kind = KIND.get(field)
+    if min_assets is not None and min_assets < 0:
+        raise ValueError(f"min_assets must be 0 or more, got {min_assets}.")
     if start:
         _quarter(start)
     if end:
@@ -549,8 +577,13 @@ def metric_series(
                     r["note"] = "No credit union reported a value for this field in this quarter."
             if field in FIELD_NOTES and FIELD_NOTES[field] is CECL_NOTE and r.get("quarter") == CECL_BREAK_QUARTER:
                 r["break_note"] = CECL_NOTE
+            if field == "net_worth_ratio_ex_cecl" and r.get("quarter") == CECL_BREAK_QUARTER:
+                r["break_note"] = EXCECL_NOTE
             if field in ("net_worth_to_assets", "net_worth") and r.get("quarter") == CECL_BREAK_QUARTER:
                 r["break_note"] = NETWORTH_NOTE
+        for r in rows:
+            if "peer_group" in r and r["peer_group"] in PEER_LABELS:
+                r["peer_group_label"] = PEER_LABELS[r["peer_group"]]
         if rows and is_ytd and not use_q:
             rows[0]["warning"] = YTD_WARNING
         return rows
@@ -726,11 +759,28 @@ def query_metrics(
     limit: int = 25,
     quarter: Optional[str] = None,
     min_assets: Optional[float] = None,
+    quarterly: Optional[bool] = None,
 ) -> list[dict]:
     if limit < 1 or limit > MAX_ROWS:
         raise ValueError(f"limit must be between 1 and {MAX_ROWS}, got {limit}.")
+    if min_assets is not None and min_assets < 0:
+        raise ValueError(f"min_assets must be 0 or more, got {min_assets}.")
     cols = ["cu_number", "name"] + [f for f in fields if f not in ("cu_number", "name")]
     sel = ", ".join(q(c) for c in cols[:40])
+    # Year-to-date fields are returned as per-quarter figures by default (quarterly=False gives raw year-to-date).
+    used = list(cols[:40]) + ([order_by] if order_by else []) + [fl.get("field") for fl in (filters or []) if isinstance(fl, dict)]
+    ytd_used = sorted({c for c in used if c in ALL_FIELDS and KIND.get(c) == "ytd"})
+    if quarterly is True and not ytd_used:
+        raise ValueError("quarterly applies only to year-to-date fields; none of the requested fields is one.")
+    use_q = bool(ytd_used) and quarterly is not False
+    src = "cu"
+    if use_q:
+        repl = ", ".join(
+            f"CASE WHEN right(quarter, 2) = '03' THEN {q(c)} WHEN {IDX} - lag({IDX}) OVER w = 1 "
+            f"THEN {q(c)} - lag({q(c)}) OVER w END AS {q(c)}" for c in ytd_used)
+        excl = ", ".join(q(c) for c in ytd_used)
+        src = (f"(SELECT * EXCLUDE ({excl}), {repl} FROM cu "
+               "WINDOW w AS (PARTITION BY cu_number ORDER BY quarter))")
     where, p = ["quarter = ?", "is_federally_insured"], [_quarter(quarter)]
     floor = min_assets if min_assets is not None else (DEFAULT_RANK_FLOOR if order_by else 0.0)
     if floor and floor > 0:
@@ -756,12 +806,24 @@ def query_metrics(
         else:
             raise ValueError("op must be one of = != > >= < <= in contains")
     order = f"ORDER BY {q(order_by)} {'DESC' if descending else 'ASC'} NULLS LAST" if order_by else ""
-    rows = run(f"SELECT {sel} FROM cu WHERE {' AND '.join(where)} {order} LIMIT {limit + 1}", p)
+    rows = run(f"SELECT {sel} FROM {src} t WHERE {' AND '.join(where)} {order} LIMIT {limit + 1}", p)
     more = len(rows) > limit
     rows = rows[:limit]
     if order_by and floor and floor > 0:
         for r in rows:
             r["assets_floor_applied"] = floor
+    elif order_by and min_assets == 0:
+        for r in rows:
+            r["assets_floor_applied"] = 0.0
+            r["floor_note"] = "No asset floor (min_assets=0): very small credit unions can top rankings."
+    if ytd_used:
+        for r in rows:
+            r["basis"] = {c: ("quarterly" if use_q else "year_to_date") for c in ytd_used if c in r}
+        if rows and not use_q:
+            rows[0]["warning"] = YTD_WARNING
+        if rows and use_q:
+            rows[0]["basis_note"] = ("Year-to-date fields are shown as per-quarter figures (this quarter minus the "
+                                     "prior quarter of the same year). Set quarterly=false for raw year-to-date.")
     if more:
         rows.append({"truncated": True, "message": f"More than {limit} rows match. Raise limit (max {MAX_ROWS}) or narrow the filters."})
     return rows
