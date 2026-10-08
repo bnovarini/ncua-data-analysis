@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .extras import extras_sql
+
 import duckdb
 
 from .spec import FIELDS
@@ -169,4 +171,10 @@ def build_all(data_dir: Path) -> duckdb.DuckDBPyConnection:
     foicu = str(data_dir / "long" / "*_foicu.parquet")
     con.execute(DIM_SQL.format(foicu=foicu))
     con.execute(METRICS_SQL)
+    con.execute("CREATE TABLE metrics_x AS " + extras_sql("fact_call_report_curated"))
+    con.execute("CREATE TABLE metrics2 AS SELECT m.*, x.* EXCLUDE (quarter, cu_number) FROM metrics m "
+                "LEFT JOIN metrics_x x USING (quarter, cu_number)")
+    con.execute("DROP TABLE metrics")
+    con.execute("ALTER TABLE metrics2 RENAME TO metrics")
+    con.execute("DROP TABLE metrics_x")
     return con
