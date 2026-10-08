@@ -392,3 +392,77 @@ class Round2Regressions(unittest.TestCase):
         rows = srv.query_metrics(["members"], limit=2, order_by="members")
         self.assertEqual(len(rows), 3)
         self.assertTrue(rows[-1]["truncated"])
+
+
+class Round5Regressions(unittest.TestCase):
+    """Ratios on NCUA's denominators reproduce NCUA's published figures (Quarterly Data Summary PDFs)."""
+
+    PUBLISHED = {  # quarter: (ROA bp, NIM %, net charge-off bp)
+        "2022-12": (89, 2.86, 34), "2023-03": (81, 3.01, 52), "2023-12": (69, 3.01, 61),
+        "2024-03": (66, 3.00, 80), "2025-03": (67, 3.24, 82), "2025-12": (79, 3.39, 78), "2026-06": (91, 3.49, 78),
+    }
+
+    def pooled(self, field, quarter):
+        r = srv.metric_series(field=field, aggregate="pooled", start=quarter, end=quarter)
+        return r[0]["value"]
+
+    def test_pooled_ncua_basis_matches_published(self):
+        for q, (roa, nim, nco) in self.PUBLISHED.items():
+            self.assertAlmostEqual(self.pooled("roa_ncua_ytd", q) * 1e4, roa, delta=0.55, msg=q)
+            self.assertAlmostEqual(self.pooled("nim_ncua_ytd", q) * 100, nim, delta=0.006, msg=q)
+            self.assertAlmostEqual(self.pooled("net_chargeoff_rate_ncua_ytd", q) * 1e4, nco, delta=0.55, msg=q)
+
+    def test_median_yield_and_cost_of_funds_match_published(self):
+        pub = {"2022-12": (4.69, 0.24), "2023-03": (4.95, 0.41), "2026-06": (6.23, 1.05)}
+        for q, (y, c) in pub.items():
+            r = srv.metric_series(field="loan_yield_ncua_ytd", aggregate="median", start=q, end=q)[0]["value"]
+            self.assertAlmostEqual(r * 100, y, delta=0.03, msg=q)
+            r = srv.metric_series(field="cost_of_funds_ncua_ytd", aggregate="median", start=q, end=q)[0]["value"]
+            self.assertAlmostEqual(r * 100, c, delta=0.03, msg=q)
+
+    def test_quarterly_variant_has_no_january_step_artifact_and_a_note(self):
+        rows = srv.metric_series(field="nim_quarterly", aggregate="pooled", start="2022-12", end="2023-03")
+        self.assertEqual(len(rows), 2)
+        self.assertIn("not an NCUA published", rows[0]["annualization_note"])
+        ytd = srv.metric_series(field="nim_avg_assets_4q", aggregate="median", start="2022-12", end="2023-03")
+        self.assertIn("re-bases every January", ytd[0]["annualization_note"])
+
+    def test_first_quarter_has_no_prior_december(self):
+        r = srv.metric_series(field="roa_ncua_ytd", aggregate="pooled", start="2018-03", end="2018-03")[0]
+        self.assertIsNone(r["value"])
+        self.assertIn("prior December", r["note"])
+
+    def test_synonym_hints(self):
+        for name, want in [("net_interest_margin", "nim_ncua_ytd"), ("NIM", "nim_quarterly"), ("capital_ratio", "net_worth_ratio_ex_cecl"),
+                           ("capital_adequacy", "net_worth_ratio_ex_cecl"), ("roe", "roa_ncua_ytd")]:
+            with self.assertRaises(ValueError) as cm:
+                srv.metric_series(field=name)
+            self.assertIn(want, str(cm.exception), name)
+        with self.assertRaises(ValueError) as cm:
+            srv.metric_series(field="profit_margin")
+        self.assertIn("Profit margin", str(cm.exception))
+        with self.assertRaises(ValueError) as cm:
+            srv.metric_series(field="net_interest_margin")
+        self.assertNotIn("Profit margin", str(cm.exception))
+
+    def test_list_fields_finds_margin_and_capital(self):
+        self.assertIn("nim_ncua_ytd", [f["field"] for f in srv.list_fields(search="net interest margin")])
+        self.assertIn("nim_ncua_ytd", [f["field"] for f in srv.list_fields(search="margin")])
+        self.assertIn("net_worth_ratio_ex_cecl", [f["field"] for f in srv.list_fields(search="capital ratio")])
+
+    def test_large_series_is_limited_and_warned(self):
+        with self.assertRaises(ValueError) as cm:
+            srv.metric_series(field="loan_yield", aggregate="pooled", group_by="state", start="2018-03", end="2026-06")
+        self.assertIn("year_end_only", str(cm.exception))
+        rows = srv.metric_series(field="loan_yield", aggregate="pooled", group_by="state", start="2018-03", end="2026-06",
+                                 year_end_only=True)
+        self.assertGreater(len(rows), srv.SERIES_WARN_ROWS)
+        self.assertIn("Large result", rows[0]["warning"])
+
+    def test_profile_splits_former_and_later_names(self):
+        old = srv.credit_union_profile(4735, "2019-12")
+        self.assertEqual(old["former_names"], [])
+        self.assertIn("FOURLEAF", old["later_names"])
+        new = srv.credit_union_profile(4735)
+        self.assertIn("BETHPAGE", new["former_names"])
+        self.assertEqual(new["later_names"], [])
