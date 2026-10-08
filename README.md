@@ -67,11 +67,13 @@ A local MCP server lets an AI assistant query this dataset in plain language. It
   "mcpServers": {
     "ncua-data": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/bnovarini/ncua-data-analysis", "ncua-data-mcp"]
+      "args": ["--from", "ncua-data-analysis", "ncua-data-mcp"]
     }
   }
 }
 ```
+
+The package is on PyPI: https://pypi.org/project/ncua-data-analysis/. To run the latest development version instead, use `"args": ["--from", "git+https://github.com/bnovarini/ncua-data-analysis", "ncua-data-mcp"]`.
 
 **Hosted, nothing to install:** `https://ncua-data-analysis.fly.dev/mcp` (streamable HTTP, read-only, rate limited to 60 requests a minute per client). Add it as a remote MCP server in any client that supports one, for example `{"mcpServers": {"ncua-data": {"url": "https://ncua-data-analysis.fly.dev/mcp"}}}`.
 
