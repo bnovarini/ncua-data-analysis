@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -17,7 +18,7 @@ from typing import Any, Optional
 import duckdb
 from mcp.server.fastmcp import FastMCP
 
-RELEASE = "v0.1"
+RELEASE = "v0.1.1"
 BASE_URL = f"https://github.com/bnovarini/ncua-data-analysis/releases/download/{RELEASE}/"
 FILES = [
     "dim_credit_union.parquet",
@@ -156,11 +157,28 @@ def list_fields(table: Optional[str] = None, search: Optional[str] = None, limit
     return rows[: max(1, min(limit, MAX_ROWS))]
 
 
+_STOP = r"\b(federal|credit|union|fcu|cu|the)\b"
+_NORM = (
+    "trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(lower(name), '[.'']', '', 'g'), '[^a-z0-9 ]', ' ', 'g'), '" + _STOP + "', ' ', 'g'), '\s+', ' ', 'g'))"
+)
+
+
+def normalize_name(text: str) -> str:
+    """Lowercase, drop punctuation and the words federal/credit/union/fcu/cu/the, collapse spaces."""
+    t = re.sub(r"[^a-z0-9 ]", " ", re.sub(r"[.']", "", text.lower()))
+    t = re.sub(_STOP, " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
 @mcp.tool(
     description=(
-        "Find credit unions by name (substring), state, charter type (federal/state) or asset peer group, "
-        "in a given quarter (default: latest). Returns cu_number, name, location, total assets, members. "
-        "Use the returned cu_number in the other tools. Only federally insured credit unions."
+        "Find credit unions by name, state, charter type (federal/state) or asset peer group, in a given quarter "
+        "(default: latest). Name matching ignores case, punctuation and the words 'federal credit union' / 'FCU', "
+        "so 'SRP Federal Credit Union' finds 'SRP'; partial names work. Results are ranked: match = exact, "
+        "starts_with, then contains, then larger assets first. When several rows come back and none is an exact "
+        "match, the name is ambiguous: ask the user which one rather than picking the first. Returns cu_number, "
+        "name, location, total assets, members. Use the returned cu_number in the other tools. "
+        "Only federally insured credit unions."
     )
 )
 def find_credit_union(
@@ -173,19 +191,31 @@ def find_credit_union(
 ) -> list[dict]:
     where, p = ["is_federally_insured"], []
     where.append("quarter = ?"); p.append(_quarter(quarter))
-    if name:
-        where.append("upper(name) LIKE ?"); p.append(f"%{name.upper()}%")
+    rank_sql, rank_p = "2", []
+    if name and name.strip():
+        qn = normalize_name(name)
+        if qn:
+            for tok in qn.split():
+                where.append(f"contains({_NORM}, ?)"); p.append(tok)
+            rank_sql = f"CASE WHEN {_NORM} = ? THEN 0 WHEN starts_with({_NORM}, ?) THEN 1 ELSE 2 END"
+            rank_p = [qn, qn]
+        else:  # only filler words, e.g. "federal credit union": fall back to the raw text
+            where.append("upper(name) LIKE ?"); p.append(f"%{name.strip().upper()}%")
     if state:
         where.append("upper(state) = ?"); p.append(state.upper())
     if charter_type:
         where.append("lower(charter_type) = ?"); p.append(charter_type.lower())
     if peer_group is not None:
         where.append("peer_group = ?"); p.append(peer_group)
-    return run(
-        "SELECT cu_number, name, city, state, charter_type, peer_group_label, total_assets, members "
-        f"FROM cu WHERE {' AND '.join(where)} ORDER BY total_assets DESC NULLS LAST LIMIT {max(1, min(limit, 50))}",
-        p,
+    rows = run(
+        f"SELECT cu_number, name, city, state, charter_type, peer_group_label, total_assets, members, {rank_sql} AS _rank "
+        f"FROM cu WHERE {' AND '.join(where)} ORDER BY _rank, total_assets DESC NULLS LAST LIMIT {max(1, min(limit, 50))}",
+        rank_p + p,
     )
+    labels = {0: "exact", 1: "starts_with", 2: "contains"}
+    for r in rows:
+        r["match"] = labels[r.pop("_rank")] if name and name.strip() else None
+    return rows
 
 
 @mcp.tool(
@@ -366,6 +396,17 @@ class RateLimit:
             if len(self.hits) > 5000:
                 self.hits = {k: v for k, v in self.hits.items() if v and now - v[-1] < 60}
         await self.app(scope, receive, send)
+
+
+def _forbid_extra_arguments() -> None:
+    """Reject unknown tool arguments instead of silently ignoring them."""
+    for t in mcp._tool_manager.list_tools():
+        model = t.fn_metadata.arg_model
+        model.model_config["extra"] = "forbid"
+        model.model_rebuild(force=True)
+
+
+_forbid_extra_arguments()
 
 
 def http_app():
