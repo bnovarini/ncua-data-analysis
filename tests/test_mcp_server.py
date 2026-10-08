@@ -98,6 +98,57 @@ class VehicleCountTests(unittest.TestCase):
         self.assertLessEqual(bad, 5)
 
 
+class Round3Regressions(unittest.TestCase):
+    """Found by the third break-test round against hosted 0.1.4."""
+
+    def test_query_metrics_ytd_is_quarterly_by_default(self):
+        rows = srv.query_metrics(["net_income_ytd"], order_by="net_income_ytd", limit=1, quarter="2025-06")
+        qtr = srv.query_metrics(["net_income_quarter"], order_by="net_income_quarter", limit=1, quarter="2025-06")
+        self.assertEqual(rows[0]["net_income_ytd"], qtr[0]["net_income_quarter"])
+        self.assertEqual(rows[0]["basis"], {"net_income_ytd": "quarterly"})
+
+    def test_query_metrics_raw_ytd_warns(self):
+        rows = srv.query_metrics(["net_income_ytd"], limit=1, quarter="2025-06", quarterly=False)
+        self.assertEqual(rows[0]["basis"], {"net_income_ytd": "year_to_date"})
+        self.assertIn("sawtooth", rows[0]["warning"])
+
+    def test_generic_name_with_contains_and_former_hits_is_ambiguous(self):
+        rows = srv.find_credit_union(name="Corporate", limit=50)
+        self.assertGreater(len(rows), 1)
+        self.assertTrue(all(r["ambiguous"] for r in rows))
+
+    def test_corporate_note(self):
+        rows = srv.find_credit_union(name="Corporate", limit=50)
+        self.assertTrue(all("Corporate credit unions are not" in r["note"] for r in rows))
+
+    def test_accents_are_folded(self):
+        a = srv.find_credit_union(name="Navy Fédéral")
+        self.assertEqual(a[0]["cu_number"], 5536)
+        self.assertEqual(srv.normalize_name("Señor"), "senor")
+
+    def test_peer_group_accepts_labels(self):
+        by_label = srv.find_credit_union(peer_group="$500M+", limit=3)
+        by_code = srv.find_credit_union(peer_group=6, limit=3)
+        self.assertEqual([r["cu_number"] for r in by_label], [r["cu_number"] for r in by_code])
+        with self.assertRaises(ValueError):
+            srv.find_credit_union(peer_group="huge")
+        rows = srv.metric_series("mix_auto", start="2023-03", end="2023-03", group_by="peer_group")
+        self.assertTrue(all(r["peer_group_label"] for r in rows))
+
+    def test_excecl_ratio_has_break_note(self):
+        rows = srv.metric_series("net_worth_ratio_ex_cecl", cu_number=5536, start="2022-12", end="2023-03")
+        self.assertIn("break_note", rows[-1])
+
+    def test_negative_min_assets_rejected_and_zero_floor_flagged(self):
+        with self.assertRaises(ValueError):
+            srv.query_metrics(["members"], order_by="members", min_assets=-5)
+        with self.assertRaises(ValueError):
+            srv.metric_series("members", min_assets=-1)
+        rows = srv.query_metrics(["members"], order_by="members", min_assets=0, limit=1)
+        self.assertIn("floor_note", rows[0])
+
+
+
 if __name__ == "__main__":
     unittest.main()
 
