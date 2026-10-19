@@ -91,7 +91,7 @@ The hosted server records request timestamp, event type, tool name, client name/
 
 From the repository root, run `fly deploy --config deploy/fly.toml`. The Docker build uses the repository root as its context. The `usagelog` volume mounts at `/data` and holds the usage log and cached dataset; preserve it during updates. `deploy/usage-start.py` starts the HTTP server with logging enabled. No credentials, usage database or dataset files belong in this repository.
 
-Tools: `list_fields`, `find_credit_union`, `credit_union_profile`, `metric_series` (one credit union or an aggregate across all), `peer_compare` (by asset group, state or charter), and `query_metrics` (filters, ordering and limits; no raw SQL). Set `NCUA_DATA_DIR` to use a folder of already-downloaded files. Status: first working version, tested over stdio with a real MCP client; not yet listed in the MCP registry.
+Tools: `list_fields`, `find_credit_union`, `credit_union_profile`, `metric_series` (one credit union or an aggregate across all), `peer_compare` (by asset group, state or charter), and `query_metrics` (filters, ordering and limits; no raw SQL). Set `NCUA_DATA_DIR` to use a folder of already-downloaded files. The hosted endpoint supports streamable HTTP; local clients can use stdio. The server is listed in the official MCP registry as `io.github.bnovarini/ncua-data-analysis`.
 
 ## Download
 
