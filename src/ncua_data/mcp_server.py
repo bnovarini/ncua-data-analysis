@@ -1046,6 +1046,31 @@ def _forbid_extra_arguments() -> None:
 _forbid_extra_arguments()
 
 
+def _method_not_found_for_unknown_tools() -> None:
+    """Answer tools/call for unknown tool names with a clean JSON-RPC -32601
+    (method not found) instead of an isError tool result, so directory probes
+    like "server/discover" stop polluting the tool-error metrics."""
+    import mcp.types as _mt
+    from mcp.shared.exceptions import McpError
+
+    server = mcp._mcp_server
+    handler = server.request_handlers.get(_mt.CallToolRequest)
+    if handler is None:
+        return
+    known = {t.name for t in mcp._tool_manager.list_tools()}
+
+    async def guarded(req):
+        name = getattr(req.params, "name", None)
+        if name not in known:
+            raise McpError(_mt.ErrorData(code=_mt.METHOD_NOT_FOUND, message=f"Method not found: {name}"))
+        return await handler(req)
+
+    server.request_handlers[_mt.CallToolRequest] = guarded
+
+
+_method_not_found_for_unknown_tools()
+
+
 def http_app():
     """ASGI app for the hosted, stateless streamable-HTTP endpoint at /mcp."""
     from mcp.server.transport_security import TransportSecuritySettings
@@ -1061,7 +1086,8 @@ def http_app():
     async def healthz(request):
         return JSONResponse({"ok": True, "latest_quarter": latest_quarter()})
 
-    return RateLimit(mcp.streamable_http_app(), int(os.environ.get("NCUA_RATE_PER_MIN", "60")))
+    from .usage import UsageLog
+    return RateLimit(UsageLog(mcp.streamable_http_app(), [t.name for t in mcp._tool_manager.list_tools()]), int(os.environ.get("NCUA_RATE_PER_MIN", "60")))
 
 
 def main() -> None:
