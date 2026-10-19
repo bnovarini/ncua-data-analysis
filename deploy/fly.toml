@@ -2,7 +2,15 @@ app = "ncua-data-analysis"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = "deploy/Dockerfile"
+
+[env]
+  MCP_USAGE_DB = "/data/usage.db"
+  PYTHONPATH = "/app/src"
+
+[mounts]
+  source = "usagelog"
+  destination = "/data"
 
 [http_service]
   internal_port = 8080
