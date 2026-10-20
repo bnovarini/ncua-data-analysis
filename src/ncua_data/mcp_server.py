@@ -103,6 +103,17 @@ def con() -> duckdb.DuckDBPyConnection:
             "CREATE VIEW cu AS SELECT dim.*, fact.* EXCLUDE (quarter, cu_number), met.* EXCLUDE (quarter, cu_number) "
             "FROM dim JOIN fact USING (quarter, cu_number) JOIN met USING (quarter, cu_number)"
         )
+        if _cuq_ready():
+            h = lambda p: str(CUQ_DIR / p)
+            c.execute(f"CREATE VIEW cuq_panel AS SELECT * FROM read_parquet('{h(CUQ_FILES[0])}')")
+            c.execute(f"CREATE VIEW cuq_row_events AS SELECT * FROM read_parquet('{h(CUQ_FILES[1])}')")
+            c.execute(f"CREATE VIEW cuq_event_detail AS SELECT * FROM read_parquet('{h(CUQ_FILES[2])}')")
+        if _bankq_ready():
+            h2 = lambda p: str(BANKQ_DIR / p)
+            c.execute(f"CREATE VIEW bankq_panel AS SELECT * FROM read_parquet('{h2(BANKQ_FILES[0])}')")
+            c.execute(f"CREATE VIEW bankq_labels AS SELECT * FROM read_parquet('{h2(BANKQ_FILES[1])}')")
+            if (BANKQ_DIR / BANKM_FILE).exists():
+                c.execute(f"CREATE VIEW bankm AS SELECT * FROM read_parquet('{h2(BANKM_FILE)}')")
         _con = c
     return _con
 
@@ -278,6 +289,99 @@ NOTE = (
 )
 
 mcp = FastMCP("ncua-data-analysis", instructions=NOTE)
+
+
+# ---- single-quarter income panel with the certified NCUA event overlay (hosted only) ----
+CUQ_DIR = Path(os.environ.get("CU_QUARTERLY_DIR", "/app/cu-quarterly"))
+CUQ_FILES = ("cu-quarter-panel-v2.parquet", "row_events.parquet", "events_unified.parquet")
+CUQ_METRICS = ("net_income_quarter", "interest_income_quarter", "interest_expense_quarter",
+               "noninterest_income_quarter", "noninterest_expense_quarter")
+CUQ_STATUS_NOTE = {
+    "verified": "Derived from consecutive year-to-date reports; continuity verified against NCUA's certified event history.",
+    "verified_departing": "Verified. This credit union leaves the dataset later this year (merger, liquidation or conversion).",
+    "verified_perimeter_change": "Verified. The reporting perimeter changed against the prior quarter within the same continuing institution.",
+    "verified_charter_conversion": "Verified. This quarter follows a charter conversion whose year-to-date continuity checks out.",
+    "event_contaminated": "This quarter spans an NCUA-recorded merger, purchase-and-assumption or conversion, so the single-quarter value mixes the institutions involved. The event is listed on the row.",
+    "unverified_no_adjacent_prior": "No value: a single-quarter figure needs the prior quarter's year-to-date report, which does not exist for this row.",
+}
+
+
+def _cuq_ready() -> bool:
+    return all((CUQ_DIR / f).exists() for f in CUQ_FILES)
+
+
+# ---- bank single-quarter income with QBP reconciliation labels (hosted only) ----
+BANKQ_DIR = Path(os.environ.get("BANK_QUARTERLY_DIR", "/app/bank-quarterly"))
+BANKQ_FILES = ("bank-quarter-v1.parquet", "qbp-labels.parquet")
+BANKQ_WARNINGS = [
+    "Official quarter income is from the FDIC vintage (2026-10-19 snapshots), not recomputed from current CDR filings.",
+    "The naive quarter (year-to-date difference) is diagnostic only; never substitute it for the official quarter.",
+    "Merger absence does not establish no restructuring: the merger history is an incomplete selected-code history.",
+    "Industry-level residuals against the FDIC Quarterly Banking Profile are labeled, never forced to balance.",
+]
+
+
+def _bankq_ready() -> bool:
+    return all((BANKQ_DIR / f).exists() for f in BANKQ_FILES)
+
+
+# ---- bank ratio metrics on FDIC year-to-date flows (hosted only) ----
+BANKM_FILE = "bank-metrics-v1.parquet"
+BANK_BANDS = {1: "under $100M", 2: "$100M-$500M", 3: "$500M-$1B", 4: "$1B-$10B", 5: "$10B+"}
+BANK_RATIOS = ("efficiency_ratio", "roa_ytd", "net_interest_margin_ytd", "noninterest_income_share")
+BANK_DOLLARS = ("assets", "deposits", "loans", "net_income_ytd", "interest_income_ytd",
+                "interest_expense_ytd", "net_interest_income_ytd", "noninterest_income_ytd",
+                "noninterest_expense_ytd")
+BANK_POOLED = {
+    "efficiency_ratio": "sum(noninterest_expense_ytd) / nullif(sum(net_interest_income_ytd + noninterest_income_ytd), 0)",
+    "roa_ytd": "sum(net_income_ytd) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) "
+               "/ nullif((sum(assets) + sum(assets_prior_dec)) / 2, 0)",
+    "net_interest_margin_ytd": "sum(net_interest_income_ytd) * (4.0 / (cast(right(quarter, 2) AS INTEGER) / 3)) "
+                               "/ nullif((sum(assets) + sum(assets_prior_dec)) / 2, 0)",
+    "noninterest_income_share": "sum(noninterest_income_ytd) / nullif(sum(net_interest_income_ytd + noninterest_income_ytd), 0)",
+}
+BANKM_NOTE = ("Year-to-date flows as reported. roa_ytd and net_interest_margin_ytd annualize the year-to-date flow "
+              "over the average of the prior December and current quarter-end assets, so they re-base every January, "
+              "the same basis as the credit union roa_ncua_ytd and nim_ncua_ytd metrics. efficiency_ratio and "
+              "noninterest_income_share are computed on the year-to-date flows without annualizing.")
+
+
+def check_size_band(sb: Any) -> Optional[int]:
+    """Accept the code (1-5) or its asset-size label ('$100M-$500M')."""
+    if sb is None:
+        return None
+    if isinstance(sb, str):
+        t = sb.strip().lower().replace(" ", "")
+        for k, v in BANK_BANDS.items():
+            if t == v.lower().replace(" ", ""):
+                return k
+        if t.isdigit():
+            sb = int(t)
+        else:
+            raise ValueError("size_band is 1 to 5: " + ", ".join(f"{k} = {v}" for k, v in BANK_BANDS.items()))
+    if sb not in BANK_BANDS:
+        raise ValueError("size_band is 1 to 5: " + ", ".join(f"{k} = {v}" for k, v in BANK_BANDS.items()))
+    return int(sb)
+
+_BANK_STOP = r"\b(national|association|bank|the|na)\b"
+
+
+def _norm_bank_sql(col: str) -> str:
+    return (
+        f"trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(strip_accents(lower({col})), '[.'']', '', 'g'), "
+        f"'[^a-z0-9 ]', ' ', 'g'), '{_BANK_STOP}', ' ', 'g'), '\\s+', ' ', 'g'))"
+    )
+
+
+_BANKNORM = _norm_bank_sql("name")
+
+
+def normalize_bank_name(text: str) -> str:
+    """Lowercase, drop punctuation and the words national/association/bank/the/N.A., collapse spaces."""
+    t = re.sub(r"[^a-z0-9 ]", " ", re.sub(r"[.']", "", _fold(text).lower()))
+    t = re.sub(_BANK_STOP, " ", t)
+    return re.sub(r"\s+", " ", t).strip()
+
 
 
 SEARCH_ALIASES = {
@@ -577,7 +681,7 @@ _REBASE_NOTES = {
 }
 _QUARTERLY_NOTE = ("Single-quarter flow times 4 over the average of the prior and current quarter-end balance. Derived by this "
                    "project: NCUA publishes only year-to-date figures, so this is not an NCUA published ratio. It is consistent "
-                   "with NCUA's year-to-date totals (see docs/RECONCILIATION.md).")
+                   "with NCUA's year-to-date totals (see docs/RECONCILIATION.md). For single-quarter income amounts (net income, interest and noninterest income/expense) with merger and conversion labels, use cu_quarter_income.")
 FIELD_NOTES = {
     **_REBASE_NOTES,
     "roa_quarterly": _QUARTERLY_NOTE, "nim_quarterly": _QUARTERLY_NOTE, "loan_yield_quarterly": _QUARTERLY_NOTE,
@@ -701,6 +805,9 @@ def metric_series(
         vexpr = "raw"
 
     def finish(rows: list[dict], aggregated: bool) -> list[dict]:
+        if aggregated and not rows:
+            return [{"note": "No credit unions match these filters in this range. Loosen the state, peer_group or "
+                             "min_assets filters or widen the range.", "value": None, "n_credit_unions": 0}]
         for r in rows:
             if basis:
                 r["basis"] = basis
@@ -1000,7 +1107,7 @@ def query_metrics(
             rows[0]["warning"] = YTD_WARNING
         if rows and use_q:
             rows[0]["basis_note"] = ("Year-to-date fields are shown as per-quarter figures (this quarter minus the "
-                                     "prior quarter of the same year). Set quarterly=false for raw year-to-date.")
+                                     "prior quarter of the same year). Set quarterly=false for raw year-to-date. For per-quarter income with merger/conversion labels, use cu_quarter_income.")
     if more:
         total = run(f"SELECT count(*) AS n FROM {src} t WHERE {' AND '.join(where)}", p)[0]["n"]
         nxt = offset + limit
@@ -1008,6 +1115,494 @@ def query_metrics(
                      "message": f"Showing rows {offset + 1}-{offset + limit} of {total}. Call again with offset={nxt} "
                                 f"for the next page (limit max {MAX_ROWS}), or narrow the filters."})
     return rows
+
+
+@mcp.tool(
+    description=(
+        "Single-quarter income for one credit union: net income, interest income, interest expense, noninterest "
+        "income and noninterest expense per quarter (dollars), 2018-03 to the latest quarter. Give cu_number and "
+        "either one quarter (default latest) or a start-end range. Derived by this project from consecutive "
+        "year-to-date 5300 call reports (Q1 equals the reported year-to-date). Every row carries a "
+        "continuity_status checked against NCUA's certified merger and conversion history: rows starting "
+        "'verified' are plain values; 'event_contaminated' rows span a merger, purchase-and-assumption or "
+        "conversion and carry the event date, type and counterpart institution; 'unverified_no_adjacent_prior' "
+        "rows return null values with the reason. One credit union per call; no rankings or trailing totals "
+        "here. Use find_credit_union to look up a cu_number."
+    )
+)
+def cu_quarter_income(
+    cu_number: int,
+    quarter: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> dict:
+    if not _cuq_ready():
+        return {"error": "Single-quarter income with the certified event overlay is served on the hosted endpoint "
+                         "(https://ncua-data-analysis.fly.dev/mcp); the local package does not ship the panel."}
+    if quarter and (start or end):
+        raise ValueError("Give either quarter or a start-end range, not both.")
+    if quarter:
+        lo = hi = _quarter(quarter)
+    else:
+        lo = _quarter(start) if start else FIRST_QUARTER
+        hi = _quarter(end) if end else latest_quarter()
+        if not start and not end:
+            lo = hi
+    if lo > hi:
+        raise ValueError(f"start {lo} is after end {hi}.")
+    lr = last_reported(cu_number)
+    if lr is None:
+        return {"error": f"cu_number {cu_number} is not in the dataset (federally insured credit unions, 2018-2026). "
+                         "Use find_credit_union to look up the number."}
+    rows = run("SELECT quarter, net_income_quarter, interest_income_quarter, interest_expense_quarter, "
+               "noninterest_income_quarter, noninterest_expense_quarter, continuity_status, event_flags "
+               "FROM cuq_panel WHERE cu_number = ? AND quarter >= ? AND quarter <= ? ORDER BY quarter",
+               [cu_number, lo, hi])
+    if not rows:
+        return {"error": f"No quarterly income rows for cu_number {cu_number} ({lr['name']}, {lr['state']}) between "
+                         f"{lo} and {hi}. Its last reported quarter is {lr['last_quarter']}."}
+    evrows = run(
+        "SELECT re.quarter AS q, u.event_id, CAST(u.event_date AS DATE) AS event_date, u.event_type, "
+        "u.subject_charter, u.survivor_charter "
+        "FROM cuq_row_events re, UNNEST(re.event_ids) AS x(eid) "
+        "JOIN cuq_event_detail u ON u.event_id = x.eid "
+        "WHERE re.cu_number = ? AND re.quarter >= ? AND re.quarter <= ?", [cu_number, lo, hi])
+    by_q: dict[str, list[dict]] = {}
+    counterpart_ids = set()
+    for e in evrows:
+        item = {"event_id": e["event_id"], "event_date": str(e["event_date"]), "event_type": e["event_type"]}
+        cp = None
+        if e["subject_charter"] == cu_number:
+            item["role"], cp = "subject (merged or converted institution)", e["survivor_charter"]
+        elif e["survivor_charter"] == cu_number:
+            item["role"], cp = "survivor (continuing institution)", e["subject_charter"]
+        else:
+            item["role"] = "related"
+        if cp is not None:
+            item["counterpart_cu_number"] = int(cp)
+            counterpart_ids.add(int(cp))
+        by_q.setdefault(e["q"], []).append(item)
+    if counterpart_ids:
+        ids = ", ".join(str(i) for i in sorted(counterpart_ids))
+        for r in run(f"SELECT cu_number, name FROM (SELECT cu_number, name, row_number() OVER "
+                     f"(PARTITION BY cu_number ORDER BY quarter DESC) rn FROM dim WHERE cu_number IN ({ids})) WHERE rn = 1"):
+            for items in by_q.values():
+                for it in items:
+                    if it.get("counterpart_cu_number") == r["cu_number"]:
+                        it["counterpart_name"] = r["name"]
+    out_rows = []
+    for r in rows:
+        st = r["continuity_status"]
+        d = {"quarter": r["quarter"], "continuity_status": st, "status_note": CUQ_STATUS_NOTE.get(st, st)}
+        for m in CUQ_METRICS:
+            d[m] = r[m]
+        raw = r["event_flags"]
+        try:
+            flags = json.loads(raw) if raw else []
+        except Exception:
+            flags = [raw] if raw else []
+        if flags:
+            d["event_flags"] = flags
+        if r["quarter"] in by_q:
+            d["events"] = by_q[r["quarter"]]
+        out_rows.append(d)
+    return {
+        "cu_number": cu_number,
+        "name": lr["name"],
+        "state": lr["state"],
+        "range": {"start": lo, "end": hi},
+        "method": ("Single quarter = this quarter's year-to-date report minus the prior quarter's (Q1 equals the "
+                   "reported year-to-date). Continuity checked against NCUA's certified charter-event history "
+                   "(mergers, conversions, liquidations, purchase-and-assumptions)."),
+        "rows": out_rows,
+        "note": NOTE,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Single-quarter income for one FDIC-insured bank, 2018-03 to 2026-06: the official quarterly net income "
+        "as published by the FDIC, plus the naive year-to-date difference with a flag where the two disagree "
+        "(for example merger pushdown accounting). Give the FDIC cert number and either one quarter (default "
+        "latest) or a start-end range; merger events are attached when recorded. Industry totals reconstructed "
+        "from these institution values match the FDIC Quarterly Banking Profile in 106 of 136 quarter-metric "
+        "checks; the 30 exceptions sit in 8 quarters between 2020-06 and 2023-09 (all Q2 or Q4 except 2023-09) "
+        "and every row in those quarters carries the label does_not_reconcile_to_qbp with the exact industry "
+        "residual per metric. Nothing is forced to balance. One bank per call; no rankings. For credit unions "
+        "use cu_quarter_income."
+    )
+)
+def bank_quarter_income(
+    cert: int | str,
+    quarter: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> dict:
+    if not _bankq_ready():
+        return {"error": "Bank single-quarter income is served on the hosted endpoint "
+                         "(https://ncua-data-analysis.fly.dev/mcp); the local package does not ship the panel."}
+    cert_s = str(cert).strip()
+    if not cert_s.isdigit():
+        raise ValueError(f"cert must be the bank's FDIC certificate number (digits), got '{cert}'. "
+                         "find_bank looks up a bank's cert by name.")
+    if quarter and (start or end):
+        raise ValueError("Give either quarter or a start-end range, not both.")
+    if quarter:
+        lo = hi = _quarter(quarter)
+    else:
+        lo = _quarter(start) if start else FIRST_QUARTER
+        hi = _quarter(end) if end else latest_quarter()
+        if not start and not end:
+            lo = hi
+    if lo > hi:
+        raise ValueError(f"start {lo} is after end {hi}.")
+    info = run("SELECT name, state, max(quarter) AS last_quarter FROM bankq_panel WHERE cert = ? "
+               "GROUP BY name, state ORDER BY max(quarter) DESC LIMIT 1", [cert_s])
+    if not info:
+        return {"error": f"cert {cert_s} is not in the bank panel (FDIC-insured institutions filing call reports, "
+                         "2018-2026). The FDIC certificate number identifies the bank; it is not the NCUA charter "
+                         "number used for credit unions."}
+    info = info[0]
+    rows = run("SELECT quarter, name, merger_event, merger_events_json, net_income_quarter_official, "
+               "net_income_quarter_naive, quarter_income_disagreement "
+               "FROM bankq_panel WHERE cert = ? AND quarter >= ? AND quarter <= ? ORDER BY quarter", [cert_s, lo, hi])
+    if not rows:
+        return {"error": f"No quarterly income rows for cert {cert_s} ({info['name']}, {info['state']}) between "
+                         f"{lo} and {hi}. Its last reported quarter is {info['last_quarter']}."}
+    by_q: dict[str, list[dict]] = {}
+    for r in run("SELECT quarter, metric, qbp_musd, panel_sum_musd, residual_musd, status FROM bankq_labels "
+                 "WHERE quarter >= ? AND quarter <= ?", [lo, hi]):
+        by_q.setdefault(r["quarter"], []).append(r)
+    out_rows = []
+    for r in rows:
+        d = {"quarter": r["quarter"],
+             "net_income_quarter_official": r["net_income_quarter_official"],
+             "net_income_quarter_naive": r["net_income_quarter_naive"],
+             "quarter_income_disagreement": r["quarter_income_disagreement"],
+             "merger_event": r["merger_event"]}
+        raw = r["merger_events_json"]
+        try:
+            ev = json.loads(raw) if raw else []
+        except Exception:
+            ev = raw
+        if ev:
+            d["merger_events"] = ev
+        ql = by_q.get(r["quarter"], [])
+        failing = [x for x in ql if x["status"] == "does_not_reconcile_to_qbp"]
+        if failing:
+            d["qbp_reconciliation"] = {
+                "status": "does_not_reconcile_to_qbp",
+                "residuals_musd": {x["metric"]: x["residual_musd"] for x in failing},
+                "qbp_published_musd": {x["metric"]: x["qbp_musd"] for x in failing},
+                "institution_sum_musd": {x["metric"]: x["panel_sum_musd"] for x in failing},
+                "note": "Industry-level residual (FDIC Quarterly Banking Profile minus the sum of official "
+                        "institution quarterly values), not this bank's. Labeled, not forced to balance.",
+            }
+        else:
+            d["qbp_reconciliation"] = {"status": "reconciles_to_qbp"}
+        out_rows.append(d)
+    return {
+        "cert": cert_s,
+        "name": info["name"],
+        "state": info["state"],
+        "range": {"start": lo, "end": hi},
+        "method": ("Official quarterly net income as published by the FDIC (dollars). The naive quarter is this "
+                   "quarter's year-to-date report minus the prior quarter's; disagreement flags acquisition "
+                   "pushdown accounting and similar breaks. QBP labels come from reconstructing industry totals "
+                   "out of the official institution values for all domestic insured filers."),
+        "rows": out_rows,
+        "warnings": BANKQ_WARNINGS,
+    }
+
+
+@mcp.tool(
+    description=(
+        "Find FDIC-insured banks by name, state or city, in a given quarter (default: latest). Name matching "
+        "ignores case and punctuation and drops the words 'national association', 'bank', 'the' and 'N.A.', so "
+        "'JPMorgan' finds JPMORGAN CHASE BANK, NATIONAL ASSOCIATION; partial names work. Results are ranked: "
+        "match = exact, starts_with, contains, then larger assets first. Each row has 'ambiguous': true when "
+        "several different banks fit the name; in that case ask the user which one (use city and state to tell "
+        "them apart) rather than picking the first. A bank that merged or closed before the quarter does not "
+        "appear in it; when nothing matches the quarter, the search falls back to history and returns rows with "
+        "match = former_or_closed and the bank's last reported quarter. If nothing matches at all, one row with "
+        "'no_match' explains why. Returns cert, name, city, state, total assets. Use the returned cert in "
+        "bank_quarter_income, bank_metric_series and bank_peer_compare. Domestic FDIC-insured filers, 2018-03 to "
+        "2026-06."
+    )
+)
+def find_bank(
+    name: Optional[str] = None,
+    state: Optional[str] = None,
+    city: Optional[str] = None,
+    quarter: Optional[str] = None,
+    limit: int = 15,
+) -> list[dict]:
+    if not (BANKQ_DIR / BANKM_FILE).exists():
+        return [{"error": "Bank search is served on the hosted endpoint (https://ncua-data-analysis.fly.dev/mcp); "
+                          "the local package does not ship the panel."}]
+    qt = _quarter(quarter)
+    state = check_state(state)
+    if limit < 1 or limit > 50:
+        raise ValueError(f"limit must be between 1 and 50, got {limit}.")
+    lim = limit
+    where, p = ["quarter = ?"], [qt]
+    if state:
+        where.append("upper(state) = ?"); p.append(state)
+    if city:
+        where.append("upper(city) = ?"); p.append(city.strip().upper())
+    cols = "cert, name, city, state, assets AS total_assets"
+    if not (name and name.strip()):
+        rows = run(f"SELECT {cols} FROM bankm WHERE {' AND '.join(where)} "
+                   f"ORDER BY assets DESC NULLS LAST LIMIT {lim}", p)
+        for r in rows:
+            r["match"] = None
+        return rows
+    qn = normalize_bank_name(name)
+    rows: list[dict] = []
+    if qn:
+        toks = qn.split()
+        cond = " AND ".join(f"contains({_BANKNORM}, ?)" for _ in toks)
+        rows = run(
+            f"SELECT {cols}, CASE WHEN {_BANKNORM} = ? THEN 0 WHEN starts_with({_BANKNORM}, ?) THEN 1 ELSE 2 END AS _rank "
+            f"FROM bankm WHERE {' AND '.join(where)} AND {cond} "
+            f"ORDER BY _rank, assets DESC NULLS LAST LIMIT {lim}", [qn, qn] + p + toks)
+    if not rows and qn:
+        # Historical fallback: a bank that merged or closed before this quarter.
+        toks = qn.split()
+        cond = " AND ".join(f"contains({_BANKNORM}, ?)" for _ in toks)
+        hwhere = ["1=1"]
+        hp: list[Any] = []
+        if state:
+            hwhere.append("upper(state) = ?"); hp.append(state)
+        if city:
+            hwhere.append("upper(city) = ?"); hp.append(city.strip().upper())
+        rows = run(
+            f"SELECT cert, name, city, state, assets AS total_assets, quarter AS last_quarter, 3 AS _rank FROM ("
+            f"SELECT *, row_number() OVER (PARTITION BY cert ORDER BY quarter DESC) AS _rn FROM bankm "
+            f"WHERE {' AND '.join(hwhere)} AND {cond}) WHERE _rn = 1 "
+            f"ORDER BY assets DESC NULLS LAST LIMIT {lim}", hp + toks)
+    labels = {0: "exact", 1: "starts_with", 2: "contains", 3: "former_or_closed"}
+    if not rows:
+        return [{"no_match": f"No FDIC-insured bank matches '{name.strip()}' in {qt}. "
+                 "Try a shorter part of the legal name, or search by state or city. The panel covers domestic "
+                 "FDIC-insured filers, 2018-03 to 2026-06; a bank that merged or closed earlier only appears in "
+                 "quarters it reported in."}]
+    rank_order = {0: 0, 1: 1, 2: 2, 3: 3}
+    seen: dict[str, dict] = {}
+    for r in rows:
+        r["match"] = labels[r.pop("_rank")]
+        seen.setdefault(r["cert"], r)
+    out = sorted(seen.values(), key=lambda r: (rank_order[{"exact":0,"starts_with":1,"contains":2,"former_or_closed":3}[r["match"]]], -(r["total_assets"] or 0)))[:lim]
+    strong = [r for r in out if r["match"] in ("exact", "starts_with")]
+    amb = len(strong) > 1 or (not strong and len(out) > 1)
+    for r in out:
+        r["ambiguous"] = amb
+        if r["match"] == "former_or_closed":
+            r["note"] = (f"Not reporting in {qt}; last reported {r['last_quarter']} (merged, acquired or closed). "
+                         "Its tools data is available through that quarter.")
+    return out
+
+
+@mcp.tool(
+    description=(
+        "Time series of one ratio or reported field for FDIC-insured banks, 2018-03 to 2026-06. Give cert (the FDIC "
+        "certificate number) for one bank. Otherwise it aggregates all domestic insured banks matching the optional "
+        "state (2-letter code) / size_band (1-5: under $100M, $100M-$500M, $500M-$1B, $1B-$10B, $10B+, by quarter-end "
+        "assets) / min_assets filters: aggregate='median' (default for ratios), 'mean', 'sum' (default for dollar "
+        "fields), 'pooled' (the system-wide version of a ratio: total numerators over total denominators), or 'count'. "
+        "group_by='size_band' or 'state' returns one row per group (defaults to the latest quarter). All income and "
+        "expense fields are year to date as reported and reset each January; assets, deposits and loans are "
+        "quarter-end balances. Ratios are fractions (0.62 = 62%). Per-bank rows carry the merger_event flag; year-to-date "
+        "ratios in a merger quarter span both institutions. For credit unions use metric_series. Fields: "
+        "efficiency_ratio (noninterest expense over net interest income plus noninterest income), roa_ytd, "
+        "net_interest_margin_ytd, noninterest_income_share (noninterest income over net interest income plus "
+        "noninterest income); assets, deposits, loans, net_income_ytd, interest_income_ytd, interest_expense_ytd, "
+        "net_interest_income_ytd, noninterest_income_ytd, noninterest_expense_ytd."
+    )
+)
+def bank_metric_series(
+    field: str,
+    cert: Optional[int | str] = None,
+    state: Optional[str] = None,
+    size_band: Optional[int | str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    aggregate: Optional[str] = None,
+    group_by: Optional[str] = None,
+    min_assets: Optional[float] = None,
+) -> list[dict]:
+    if not (BANKQ_DIR / BANKM_FILE).exists():
+        return [{"error": "Bank ratio metrics are served on the hosted endpoint "
+                          "(https://ncua-data-analysis.fly.dev/mcp); the local package does not ship the panel."}]
+    if field not in BANK_RATIOS and field not in BANK_DOLLARS:
+        raise ValueError(f"Unknown bank field '{field}'. Fields: " + ", ".join(BANK_RATIOS + BANK_DOLLARS) + ".")
+    if min_assets is not None and min_assets < 0:
+        raise ValueError(f"min_assets must be 0 or more, got {min_assets}.")
+    if start:
+        _quarter(start)
+    if end:
+        _quarter(end)
+    if group_by not in (None, "size_band", "state"):
+        raise ValueError("group_by must be 'size_band' or 'state'")
+    if group_by and cert is not None:
+        raise ValueError("group_by compares groups of banks; leave cert out.")
+    if group_by and not start and not end:
+        start = end = latest_quarter()
+    lo, hi = start or FIRST_QUARTER, end or latest_quarter()
+    if lo > hi:
+        raise ValueError(f"start {lo} is after end {hi}.")
+    is_ratio = field in BANK_RATIOS
+    basis = "fraction" if is_ratio else ("dollars, year to date" if field.endswith("_ytd") else "dollars, quarter-end balance")
+    f = f'"{field}"'  # whitelisted against BANK_RATIOS/BANK_DOLLARS above
+
+    if cert is not None:
+        cert_s = str(cert).strip()
+        if not cert_s.isdigit():
+            raise ValueError(f"cert must be the bank's FDIC certificate number (digits), got '{cert}'. "
+                             "find_bank looks up a bank's cert by name.")
+        if lo > hi:
+            raise ValueError(f"start {lo} is after end {hi}.")
+        rows = run(f"SELECT quarter, {f} AS value, merger_event, quarter_income_disagreement FROM bankm "
+                   "WHERE cert = ? AND quarter >= ? AND quarter <= ? ORDER BY quarter", [cert_s, lo, hi])
+        if not rows:
+            return [{"error": f"cert {cert_s} is not in the bank metrics panel (domestic FDIC-insured filers, 2018-2026). "
+                              "Check the cert with find_bank."}]
+        for r in rows:
+            r["basis"] = basis
+            if r.pop("quarter_income_disagreement"):
+                r["perimeter_break"] = True
+                r["note"] = ("Year-to-date figures this quarter span a reporting-perimeter change (for example an "
+                             "acquisition); see bank_quarter_income for the official-versus-naive detail.")
+        if is_ratio:
+            rows[0]["annualization_note"] = BANKM_NOTE
+        return rows
+
+    state, sb = check_state(state), check_size_band(size_band)
+    where, p = ["1=1"], []
+    if state:
+        where.append("upper(state) = ?"); p.append(state)
+    if sb is not None:
+        where.append("size_band = ?"); p.append(sb)
+    if min_assets is not None:
+        where.append("assets >= ?"); p.append(float(min_assets))
+    agg = (aggregate or ("median" if is_ratio else "sum")).lower()
+    if agg not in ("median", "mean", "sum", "count", "pooled"):
+        raise ValueError("aggregate must be one of: median, mean, sum, count, pooled")
+    if agg == "pooled":
+        if not is_ratio:
+            raise ValueError("pooled applies to the ratio fields; dollar fields aggregate by sum.")
+        expr = BANK_POOLED[field]
+    else:
+        if agg == "sum" and is_ratio:
+            raise ValueError(f"'{field}' is a ratio, so summing it across banks is meaningless. Use median, mean or pooled.")
+        expr = {"median": f"median({f})", "mean": f"avg({f})", "sum": f"sum({f})", "count": f"count({f})"}[agg]
+    gcol = f"{group_by}, " if group_by else ""
+    gb = f"quarter, {group_by}" if group_by else "quarter"
+    tail = f"GROUP BY {gb} ORDER BY quarter{', value DESC' if group_by else ''}"
+    rows = run(f"SELECT quarter, {gcol}{expr} AS value, count({f}) AS n_banks FROM bankm "
+               f"WHERE {' AND '.join(where)} AND quarter >= ? AND quarter <= ? {tail}", p + [lo, hi])
+    if not rows:
+        return [{"note": f"No domestic insured banks match these filters between {lo} and {hi}. "
+                         "Loosen the state, size_band or min_assets filters or widen the range.",
+                 "value": None, "n_banks": 0}]
+    for r in rows:
+        r["basis"] = basis
+        if "size_band" in r and r["size_band"] in BANK_BANDS:
+            r["size_band_label"] = BANK_BANDS[r["size_band"]]
+    if rows and is_ratio:
+        rows[0]["annualization_note"] = BANKM_NOTE
+    if len(rows) > SERIES_MAX_ROWS:
+        raise ValueError(f"This would return {len(rows)} rows, over the {SERIES_MAX_ROWS}-row limit. "
+                         "Narrow it with start and end, a state or size_band filter, or drop group_by.")
+    return rows
+
+
+BANK_PEER_BASES = {
+    "size_band": ["size_band"],
+    "state": ["state"],
+    "size_band_and_state": ["size_band", "state"],
+}
+
+
+@mcp.tool(
+    description=(
+        "One bank against its peers in a quarter (default latest): value, peer median, quartiles and percentile "
+        "rank for efficiency_ratio, roa_ytd, net_interest_margin_ytd and noninterest_income_share. Percentile rank "
+        "is the share of peers at or below the bank's value; for efficiency_ratio lower is better. Give the FDIC "
+        "certificate number (find_bank looks it up by name). peer_basis: 'size_band' (default; bands by "
+        "quarter-end assets: 1 = under $100M, 2 = $100M-$500M, 3 = $500M-$1B, 4 = $1B-$10B, 5 = $10B+), 'state' "
+        "(same-state banks), or 'size_band_and_state'. Ratios are fractions on year-to-date flows (roa_ytd and "
+        "net_interest_margin_ytd annualized over average assets, re-basing each January). For credit unions use "
+        "peer_compare."
+    )
+)
+def bank_peer_compare(
+    cert: int | str,
+    quarter: Optional[str] = None,
+    peer_basis: str = "size_band",
+) -> dict:
+    if not (BANKQ_DIR / BANKM_FILE).exists():
+        return {"error": "Bank ratio metrics are served on the hosted endpoint "
+                         "(https://ncua-data-analysis.fly.dev/mcp); the local package does not ship the panel."}
+    cert_s = str(cert).strip()
+    if not cert_s.isdigit():
+        raise ValueError(f"cert must be the bank's FDIC certificate number (digits), got '{cert}'. "
+                         "find_bank looks up a bank's cert by name.")
+    if peer_basis not in BANK_PEER_BASES:
+        raise ValueError(f"peer_basis must be one of {list(BANK_PEER_BASES)}")
+    qq = _quarter(quarter) if quarter else latest_quarter()
+    me_rows = run("SELECT name, state, assets, size_band, merger_event, quarter_income_disagreement, efficiency_ratio, "
+                  "roa_ytd, net_interest_margin_ytd, noninterest_income_share FROM bankm WHERE cert = ? AND quarter = ?",
+                  [cert_s, qq])
+    if not me_rows:
+        info = run("SELECT name, state, max(quarter) AS last_quarter FROM bankm WHERE cert = ? "
+                   "GROUP BY name, state ORDER BY max(quarter) DESC LIMIT 1", [cert_s])
+        if not info:
+            return {"error": f"cert {cert_s} is not in the bank metrics panel (domestic FDIC-insured filers, 2018-2026). "
+                             "The FDIC certificate number identifies the bank; it is not the NCUA charter number used for credit unions."}
+        return {"error": f"No {qq} row for cert {cert_s} ({info[0]['name']}, {info[0]['state']}). "
+                         f"Its last reported quarter is {info[0]['last_quarter']}."}
+    me = me_rows[0]
+    pcols = BANK_PEER_BASES[peer_basis]
+    peers = run("SELECT efficiency_ratio, roa_ytd, net_interest_margin_ytd, noninterest_income_share "
+                f"FROM bankm WHERE quarter = ? AND {' AND '.join(c + ' = ?' for c in pcols)}",
+                [qq] + [me[c] for c in pcols])
+
+    def pct(sorted_vals: list[float], v: float) -> float:
+        return round(100.0 * sum(1 for x in sorted_vals if x <= v) / len(sorted_vals), 1)
+
+    def quantile(sorted_vals: list[float], p_: float) -> float:
+        n = len(sorted_vals)
+        i = p_ * (n - 1)
+        lo_i, hi_i = int(i), min(int(i) + 1, n - 1)
+        return sorted_vals[lo_i] + (sorted_vals[hi_i] - sorted_vals[lo_i]) * (i - lo_i)
+
+    comparisons = []
+    for fld in BANK_RATIOS:
+        vals = sorted(r[fld] for r in peers if r[fld] is not None)
+        v = me[fld]
+        if v is None or not vals:
+            comparisons.append({"field": fld, "value": v, "note": "No value for this bank or band in this quarter."})
+            continue
+        comparisons.append({"field": fld, "value": v, "band_median": quantile(vals, 0.5),
+                            "band_p25": quantile(vals, 0.25), "band_p75": quantile(vals, 0.75),
+                            "percentile_rank": pct(vals, v), "peers": len(vals)})
+    out = {"cert": cert_s, "name": me["name"], "state": me["state"], "quarter": qq,
+           "assets": me["assets"], "size_band": me["size_band"], "size_band_label": BANK_BANDS.get(me["size_band"]),
+           "peer_basis": {c: (BANK_BANDS.get(me[c]) if c == "size_band" else me[c]) for c in pcols},
+           "merger_event": me["merger_event"], "basis": BANKM_NOTE, "comparisons": comparisons}
+    if me["merger_event"]:
+        out["merger_note"] = ("This quarter spans a recorded merger, so the year-to-date ratios mix the institutions "
+                              "involved. See bank_quarter_income for the event detail.")
+    if me["quarter_income_disagreement"]:
+        out["perimeter_note"] = ("This bank's year-to-date figures this quarter span a reporting-perimeter change "
+                                 "(for example an acquisition), so the ratios mix perimeters. See bank_quarter_income "
+                                 "for the official-versus-naive detail.")
+    n_peers = max((c.get("peers") or 0 for c in comparisons), default=0)
+    if 0 < n_peers < 10:
+        out["small_peer_set"] = (f"Only {n_peers} banks in this peer set for {qq}; quartiles and percentile ranks "
+                                 "are coarse. Widen the basis (size_band instead of size_band_and_state) if it is too thin.")
+    return out
 
 
 class RateLimit:
