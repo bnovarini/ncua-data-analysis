@@ -2,6 +2,8 @@
 
 Clean, documented, quarterly credit union data from NCUA call reports, 2018 to today: lending, deposit mix, earnings, staffing and efficiency.
 
+The MCP server below also covers FDIC-insured banks: quarterly income, efficiency, ROA and peer benchmarking across both sectors.
+
 NCUA publishes every federally insured credit union's quarterly 5300 call report as free bulk files. They are hard to use: 3,300+ account columns split across 17 wide tables, form changes that move accounts around, year-to-date income, and a data dictionary written as form instructions. This project turns that into four tidy tables you can query with DuckDB, pandas or anything that reads Parquet.
 
 Status: v0. 115 curated fields and 52 computed metrics, 34 quarters (2018 Q1 to 2026 Q2), checked against NCUA's own published totals. See [what is not done yet](#not-done-yet).
@@ -89,9 +91,11 @@ The hosted server records request timestamp, event type, tool name, client name/
 
 ### Deploy from this repository
 
-From the repository root, run `fly deploy --config deploy/fly.toml`. The Docker build uses the repository root as its context. The `usagelog` volume mounts at `/data` and holds the usage log and cached dataset; preserve it during updates. `deploy/usage-start.py` starts the HTTP server with logging enabled. No credentials, usage database or dataset files belong in this repository.
+From the repository root, run `fly deploy --config deploy/fly.toml`. The Docker build uses the repository root as its context and bakes the private quarterly and bank panels (`cu-quarterly/`, `bank-quarterly/`) into the image, so a local build without those directories fails by design. The `usagelog` volume mounts at `/data` and holds the usage log and cached dataset; preserve it during updates. `deploy/usage-start.py` starts the HTTP server with logging enabled. No credentials, usage database or dataset files belong in this repository.
 
-Tools: `list_fields`, `find_credit_union`, `credit_union_profile`, `metric_series` (one credit union or an aggregate across all), `peer_compare` (by asset group, state or charter), and `query_metrics` (filters, ordering and limits; no raw SQL). Set `NCUA_DATA_DIR` to use a folder of already-downloaded files. The hosted endpoint supports streamable HTTP; local clients can use stdio. The server is listed in the official MCP registry as `io.github.bnovarini/ncua-data-analysis`.
+The server covers both sectors, 2018-03 to 2026-06. Credit union tools: `list_fields`, `find_credit_union`, `credit_union_profile`, `metric_series` (one credit union or an aggregate across all), `peer_compare` (by asset group, state or charter), `query_metrics` (filters, ordering and limits; no raw SQL), and `cu_quarter_income` (single-quarter income with certified merger-event labels). Bank tools: `find_bank` (lookup by name), `bank_quarter_income` (official FDIC quarterly income with naive-difference flags and Quarterly Banking Profile reconciliation labels), `bank_metric_series` (efficiency, ROA, margin and income mix for one bank or aggregates, by state or asset band), and `bank_peer_compare` (a bank against its asset band, state or both). Bank ratios use the same formulas as the credit union metrics, so cross-sector comparisons are valid.
+
+The quarterly-income and bank tools need panel files that are baked into the hosted image and are not in this repository; on a local install they answer with a pointer to the hosted endpoint. Set `NCUA_DATA_DIR` to use a folder of already-downloaded files. The hosted endpoint supports streamable HTTP; local clients can use stdio. The server is listed in the official MCP registry as `io.github.bnovarini/ncua-data-analysis`.
 
 ## Download
 
@@ -106,6 +110,6 @@ duckdb.sql(f"SELECT quarter, count(*) FROM read_parquet({parts}) GROUP BY 1 ORDE
 
 ## Data source and license
 
-Data: National Credit Union Administration, 5300 Call Report Quarterly Data. NCUA does not state a license on the download page. As a US federal agency's work it is assumed to be public domain, but that assumption has not been confirmed. Credit NCUA when you use it.
+Data: National Credit Union Administration, 5300 Call Report Quarterly Data. Bank data: FFIEC Central Data Repository call reports via the FDIC's BankFind API, reconciled against the FDIC Quarterly Banking Profile. NCUA does not state a license on the download page. As a US federal agency's work it is assumed to be public domain, but that assumption has not been confirmed. Credit NCUA when you use it.
 
 Code: MIT, see LICENSE.
