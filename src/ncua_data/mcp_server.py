@@ -484,6 +484,9 @@ def find_credit_union(
     if limit < 1 or limit > 50:
         raise ValueError(f"limit must be between 1 and 50, got {limit}.")
     lim = limit
+    search_lim = 50  # detect ambiguity before applying the requested display limit
+    if name is not None and len(name) > 256:
+        raise ValueError("name must be at most 256 characters. Use a shorter distinctive part of the institution name.")
     base_where, base_p = ["is_federally_insured", "quarter = ?"], [qt]
     if state:
         base_where.append("upper(state) = ?"); base_p.append(state)
@@ -505,14 +508,14 @@ def find_credit_union(
     phrases += [normalize_name(x) for x in ALIASES.get(qn, [])]
     rows: list[dict] = []
     if not qn:  # only filler words, e.g. "federal credit union": fall back to the raw text
-        rows = run(f"SELECT {cols}, 2 AS _rank FROM cu WHERE {' AND '.join(base_where)} AND upper(name) LIKE ? "
-                   f"ORDER BY total_assets DESC NULLS LAST LIMIT {lim}", base_p + [f"%{name.strip().upper()}%"])
+        rows = run(f"SELECT {cols}, 2 AS _rank FROM cu WHERE {' AND '.join(base_where)} AND contains(upper(name), ?) "
+                   f"ORDER BY total_assets DESC NULLS LAST LIMIT {search_lim}", base_p + [name.strip().upper()])
     for ph in phrases:
         toks = ph.split()
         cond = " AND ".join(f"contains({_NORM}, ?)" for _ in toks)
         rows += run(
             f"SELECT {cols}, CASE WHEN {_NORM} = ? THEN 0 WHEN starts_with({_NORM}, ?) THEN 1 ELSE 2 END AS _rank "
-            f"FROM cu WHERE {' AND '.join(base_where)} AND {cond} ORDER BY _rank, total_assets DESC NULLS LAST LIMIT {lim}",
+            f"FROM cu WHERE {' AND '.join(base_where)} AND {cond} ORDER BY _rank, total_assets DESC NULLS LAST LIMIT {search_lim}",
             [ph, ph] + base_p + toks,
         )
     labels = {0: "exact", 1: "starts_with", 2: "contains"}
@@ -544,17 +547,17 @@ def find_credit_union(
         for w in words:
             conds.append(f"contains({raw}, ?)"); cp.append(w)
         extra = run(f"SELECT {cols}, 'partial_words' AS _m FROM cu WHERE {' AND '.join(base_where)} AND {' AND '.join(conds)} "
-                    f"ORDER BY total_assets DESC NULLS LAST LIMIT {lim}", base_p + cp)
+                    f"ORDER BY total_assets DESC NULLS LAST LIMIT {search_lim}", base_p + cp)
         if len(words) == 1 and len(words[0]) >= 3:
             ini = f"array_to_string(list_transform(list_filter(string_split({raw}, ' '), x -> x <> ''), x -> x[1]), '')"
             tk = words[0]
             extra += run(f"SELECT {cols}, 'abbreviation' AS _m FROM cu WHERE {' AND '.join(base_where)} AND "
-                         f"({ini} = ? OR {ini} = ?) ORDER BY total_assets DESC NULLS LAST LIMIT {lim}", base_p + [tk, (lambda t: t if len(t) >= 2 else tk)(tk.removesuffix('fcu').removesuffix('cu'))])
+                         f"({ini} = ? OR {ini} = ?) ORDER BY total_assets DESC NULLS LAST LIMIT {search_lim}", base_p + [tk, (lambda t: t if len(t) >= 2 else tk)(tk.removesuffix('fcu').removesuffix('cu'))])
         for r in extra:
             r["match"] = r.pop("_m")
             seen.setdefault(r["cu_number"], r)
     order = {"exact": 0, "starts_with": 1, "contains": 2, "former_name": 3, "partial_words": 4, "abbreviation": 5}
-    out = sorted(seen.values(), key=lambda r: (order[r["match"]], -(r["total_assets"] or 0)))[:lim]
+    out = sorted(seen.values(), key=lambda r: (order[r["match"]], -(r["total_assets"] or 0)))
     if out:
         exact = [r for r in out if r["match"] == "exact"]
         starts = [r for r in out if r["match"] == "starts_with"]
@@ -581,7 +584,7 @@ def find_credit_union(
                 # initials can belong to a different credit union than the one the user means
                 r["ambiguous"] = True
                 r["note"] = "Matched on initials only. Confirm this is the credit union meant before using it."
-        return out
+        return out[:lim]
     # Nothing in this quarter. Is it a credit union that stopped reporting?
     gone = []
     for ph in phrases:
@@ -1345,6 +1348,9 @@ def find_bank(
     if limit < 1 or limit > 50:
         raise ValueError(f"limit must be between 1 and 50, got {limit}.")
     lim = limit
+    search_lim = 50  # detect ambiguity before applying the requested display limit
+    if name is not None and len(name) > 256:
+        raise ValueError("name must be at most 256 characters. Use a shorter distinctive part of the institution name.")
     where, p = ["quarter = ?"], [qt]
     if state:
         where.append("upper(state) = ?"); p.append(state)
@@ -1365,7 +1371,7 @@ def find_bank(
         rows = run(
             f"SELECT {cols}, CASE WHEN {_BANKNORM} = ? THEN 0 WHEN starts_with({_BANKNORM}, ?) THEN 1 ELSE 2 END AS _rank "
             f"FROM bankm WHERE {' AND '.join(where)} AND {cond} "
-            f"ORDER BY _rank, assets DESC NULLS LAST LIMIT {lim}", [qn, qn] + p + toks)
+            f"ORDER BY _rank, assets DESC NULLS LAST LIMIT {search_lim}", [qn, qn] + p + toks)
     if not rows and qn:
         # Historical fallback: a bank that merged or closed before this quarter.
         toks = qn.split()
@@ -1380,7 +1386,7 @@ def find_bank(
             f"SELECT cert, name, city, state, assets AS total_assets, quarter AS last_quarter, 3 AS _rank FROM ("
             f"SELECT *, row_number() OVER (PARTITION BY cert ORDER BY quarter DESC) AS _rn FROM bankm "
             f"WHERE {' AND '.join(hwhere)} AND {cond}) WHERE _rn = 1 "
-            f"ORDER BY assets DESC NULLS LAST LIMIT {lim}", hp + toks)
+            f"ORDER BY assets DESC NULLS LAST LIMIT {search_lim}", hp + toks)
     labels = {0: "exact", 1: "starts_with", 2: "contains", 3: "former_or_closed"}
     if not rows:
         return [{"no_match": f"No FDIC-insured bank matches '{name.strip()}' in {qt}. "
@@ -1392,7 +1398,7 @@ def find_bank(
     for r in rows:
         r["match"] = labels[r.pop("_rank")]
         seen.setdefault(r["cert"], r)
-    out = sorted(seen.values(), key=lambda r: (rank_order[{"exact":0,"starts_with":1,"contains":2,"former_or_closed":3}[r["match"]]], -(r["total_assets"] or 0)))[:lim]
+    out = sorted(seen.values(), key=lambda r: (rank_order[{"exact":0,"starts_with":1,"contains":2,"former_or_closed":3}[r["match"]]], -(r["total_assets"] or 0)))
     strong = [r for r in out if r["match"] in ("exact", "starts_with")]
     amb = len(strong) > 1 or (not strong and len(out) > 1)
     for r in out:
@@ -1400,7 +1406,7 @@ def find_bank(
         if r["match"] == "former_or_closed":
             r["note"] = (f"Not reporting in {qt}; last reported {r['last_quarter']} (merged, acquired or closed). "
                          "Its tools data is available through that quarter.")
-    return out
+    return out[:lim]
 
 
 @mcp.tool(
