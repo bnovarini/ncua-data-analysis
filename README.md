@@ -113,3 +113,15 @@ duckdb.sql(f"SELECT quarter, count(*) FROM read_parquet({parts}) GROUP BY 1 ORDE
 Data: National Credit Union Administration, 5300 Call Report Quarterly Data. Bank data: FFIEC Central Data Repository call reports via the FDIC's BankFind API, reconciled against the FDIC Quarterly Banking Profile. NCUA does not state a license on the download page. As a US federal agency's work it is assumed to be public domain, but that assumption has not been confirmed. Credit NCUA when you use it.
 
 Code: MIT, see LICENSE.
+
+## Bank employees and revenue per FTE
+
+The hosted MCP includes `bank_metric_series(field="employees_fte_reported")`, `list_bank_fields`, and `revenue_per_employee`. The productivity tool compares banks, credit unions, or both in a headquarters state, with inputs, ranks, peer median, pagination and explicit exclusions.
+
+Example: `revenue_per_employee(state="NC", cu_number=18297)` compares Coastal with the eligible NC-headquartered institutions in the same quarter. Use `sector="credit_union"` or `sector="bank"` for a single sector.
+
+Net revenue means interest income minus interest expense plus noninterest income. Gross revenue means interest income plus noninterest income. The ratio annualizes year-to-date revenue and divides by quarter-end FTE. It is a run rate, not actual full-year revenue, net profit, or revenue divided by average workforce.
+
+Credit-union FTE is our estimate: NCUA full-time employees (account 564A) plus half of part-time employees (564B). Bank FTE is reported by the bank through FDIC NUMEMP. These definitions differ, so combined-sector comparisons are indicative. Headquarters state does not mean all business occurs in that state. Outsourcing, business mix and mergers affect comparisons. Null/zero employees and known reporting-perimeter breaks are excluded and counted.
+
+The hosted bank employee panel covers 2018Q1 through 2026Q2. Employee counts are not dollar amounts and are not scaled by 1,000. The local package does not ship the bank employee data; use the hosted endpoint or supply the separate panel when self-hosting.
