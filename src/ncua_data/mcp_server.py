@@ -114,6 +114,9 @@ def con() -> duckdb.DuckDBPyConnection:
             c.execute(f"CREATE VIEW bankq_labels AS SELECT * FROM read_parquet('{h2(BANKQ_FILES[1])}')")
             if (BANKQ_DIR / BANKM_FILE).exists():
                 c.execute(f"CREATE VIEW bankm AS SELECT * FROM read_parquet('{h2(BANKM_FILE)}')")
+                if (BANKQ_DIR / "bank-employees-v1.parquet").exists():
+                    c.execute(f"CREATE VIEW bank_employees AS SELECT * FROM read_parquet('{h2('bank-employees-v1.parquet')}')")
+                    c.execute("CREATE VIEW bankm_with_employees AS SELECT b.*, e.employees_fte_reported FROM bankm b LEFT JOIN bank_employees e USING (quarter, cert)")
         _con = c
     return _con
 
@@ -1423,7 +1426,7 @@ def find_bank(
         "efficiency_ratio (noninterest expense over net interest income plus noninterest income), roa_ytd, "
         "net_interest_margin_ytd, noninterest_income_share (noninterest income over net interest income plus "
         "noninterest income); assets, deposits, loans, net_income_ytd, interest_income_ytd, interest_expense_ytd, "
-        "net_interest_income_ytd, noninterest_income_ytd, noninterest_expense_ytd."
+        "net_interest_income_ytd, noninterest_income_ytd, noninterest_expense_ytd; employees_fte_reported (reported bank FTE from FDIC NUMEMP, not headcount)."
     )
 )
 def bank_metric_series(
@@ -1440,7 +1443,11 @@ def bank_metric_series(
     if not (BANKQ_DIR / BANKM_FILE).exists():
         return [{"error": "Bank ratio metrics are served on the hosted endpoint "
                           "(https://ncua-data-analysis.fly.dev/mcp); the local package does not ship the panel."}]
-    if field not in BANK_RATIOS and field not in BANK_DOLLARS:
+    if field == "employees_fte_reported":
+        if not (BANKQ_DIR / "bank-employees-v1.parquet").exists():
+            return [{"error": "Bank employee data is not loaded on this server."}]
+        # Separate view preserves every existing bank metric and its result shape.
+    if field not in BANK_RATIOS and field not in BANK_DOLLARS and field != "employees_fte_reported":
         raise ValueError(f"Unknown bank field '{field}'. Fields: " + ", ".join(BANK_RATIOS + BANK_DOLLARS) + ".")
     if min_assets is not None and min_assets < 0:
         raise ValueError(f"min_assets must be 0 or more, got {min_assets}.")
@@ -1459,6 +1466,9 @@ def bank_metric_series(
         raise ValueError(f"start {lo} is after end {hi}.")
     is_ratio = field in BANK_RATIOS
     basis = "fraction" if is_ratio else ("dollars, year to date" if field.endswith("_ytd") else "dollars, quarter-end balance")
+    if field == "employees_fte_reported":
+        basis = "count, reported full-time equivalents at quarter end (FDIC NUMEMP)"
+    source = "bankm_with_employees" if field == "employees_fte_reported" else "bankm"
     f = f'"{field}"'  # whitelisted against BANK_RATIOS/BANK_DOLLARS above
 
     if cert is not None:
@@ -1468,7 +1478,7 @@ def bank_metric_series(
                              "find_bank looks up a bank's cert by name.")
         if lo > hi:
             raise ValueError(f"start {lo} is after end {hi}.")
-        rows = run(f"SELECT quarter, {f} AS value, merger_event, quarter_income_disagreement FROM bankm "
+        rows = run(f"SELECT quarter, {f} AS value, merger_event, quarter_income_disagreement FROM {source} "
                    "WHERE cert = ? AND quarter >= ? AND quarter <= ? ORDER BY quarter", [cert_s, lo, hi])
         if not rows:
             return [{"error": f"cert {cert_s} is not in the bank metrics panel (domestic FDIC-insured filers, 2018-2026). "
@@ -1505,7 +1515,7 @@ def bank_metric_series(
     gcol = f"{group_by}, " if group_by else ""
     gb = f"quarter, {group_by}" if group_by else "quarter"
     tail = f"GROUP BY {gb} ORDER BY quarter{', value DESC' if group_by else ''}"
-    rows = run(f"SELECT quarter, {gcol}{expr} AS value, count({f}) AS n_banks FROM bankm "
+    rows = run(f"SELECT quarter, {gcol}{expr} AS value, count({f}) AS n_banks FROM {source} "
                f"WHERE {' AND '.join(where)} AND quarter >= ? AND quarter <= ? {tail}", p + [lo, hi])
     if not rows:
         return [{"note": f"No domestic insured banks match these filters between {lo} and {hi}. "
@@ -1609,6 +1619,97 @@ def bank_peer_compare(
         out["small_peer_set"] = (f"Only {n_peers} banks in this peer set for {qq}; quartiles and percentile ranks "
                                  "are coarse. Widen the basis (size_band instead of size_band_and_state) if it is too thin.")
     return out
+
+
+PRODUCTIVITY_NOTE = (
+    "Net revenue = interest income - interest expense + noninterest income, not net profit. Gross revenue = interest income + noninterest income. "
+    "Annualized YTD run rate uses 4/quarter_number, not actual full-year revenue. Denominator is quarter-end employees, not period-average. "
+    "CU FTE is a project estimate: full-time + 0.5*part-time (NCUA accounts 564A/564B); banks report FTE (FDIC NUMEMP). "
+    "These denominators are not identical definitions, so cross-sector comparisons are indicative. State means institution headquarters, not branch footprint. "
+    "Mergers, business mix and outsourcing affect comparisons; banks' consolidated activity can be national or international."
+)
+
+@mcp.tool(description="Dictionary of available bank fields, source, units and employee definitions. Bank fields are separate from the NCUA list_fields dictionary.")
+def list_bank_fields(search: Optional[str] = None) -> list[dict]:
+    fields = []
+    for f in BANK_RATIOS + BANK_DOLLARS + ("employees_fte_reported",):
+        desc = {
+            "employees_fte_reported": "Reported full-time-equivalent employees at quarter end, rounded to whole employees. FDIC NUMEMP; this is not raw headcount.",
+            "efficiency_ratio": "Noninterest expense / (net interest income + noninterest income).",
+            "roa_ytd": "Annualized year-to-date net income / average prior-December and current assets.",
+            "net_interest_margin_ytd": "Annualized year-to-date net interest income / average prior-December and current assets.",
+            "noninterest_income_share": "Noninterest income / (net interest income + noninterest income).",
+        }.get(f, f.replace('_', ' ') + ("; year to date." if f.endswith('_ytd') else "; quarter-end balance."))
+        if search and search.lower() not in (f + ' ' + desc).lower():
+            continue
+        fields.append({"field": f, "description": desc, "unit": "count" if f == "employees_fte_reported" else "fraction" if f in BANK_RATIOS else "dollars",
+                       "source": "FDIC BankFind financials API, NUMEMP" if f == "employees_fte_reported" else "FDIC financials, with project-derived ratios",
+                       "basis": "quarter_end" if f == "employees_fte_reported" or not f.endswith('_ytd') and f not in BANK_RATIOS else "year_to_date",
+                       "employee_caveat": PRODUCTIVITY_NOTE if f == "employees_fte_reported" else None})
+    return fields
+
+@mcp.tool(description="Revenue per employee/FTE with explicit inputs, same-quarter state ranking across banks and/or credit unions. sector='both', 'bank' or 'credit_union'. revenue_basis='net' (after interest expense, default) or 'gross'. Annualized year-to-date run rate, not actual full-year revenue. State filters headquarters. Banks use reported FTE; CUs estimated full-time + half part-time, not identical definitions. Invalid denominators and known reporting-perimeter breaks excluded from ranks and counted. Optional cu_number/cert selects that institution but keeps full peer rank. No raw SQL.")
+def revenue_per_employee(state: Optional[str] = None, quarter: Optional[str] = None,
+                         sector: str = "both", revenue_basis: str = "net",
+                         cu_number: Optional[int] = None, cert: Optional[int | str] = None,
+                         min_assets: float = 0, limit: int = 25, offset: int = 0) -> dict:
+    qq = quarter or latest_quarter(); _quarter(qq)
+    state = check_state(state)
+    if sector not in ("both", "bank", "credit_union"):
+        raise ValueError("sector must be both, bank or credit_union")
+    if revenue_basis not in ("net", "gross"):
+        raise ValueError("revenue_basis must be net or gross")
+    if min_assets < 0 or not 1 <= limit <= 200 or offset < 0 or not float(min_assets) < float("inf"):
+        raise ValueError("min_assets and offset must be nonnegative; limit must be 1 to 200")
+    if cu_number is not None and cert is not None:
+        raise ValueError("Select cu_number or cert, not both")
+    if cu_number is not None and sector == "bank" or cert is not None and sector == "credit_union":
+        raise ValueError("Selected institution conflicts with sector")
+    if cert is not None and not str(cert).isdigit():
+        raise ValueError("cert must be digits")
+    ann = 12 / int(qq[5:7]); sources=[]
+    if sector in ("both", "credit_union"):
+        if not _cuq_ready():
+            return {"error": "CU continuity panel unavailable; cannot verify productivity ranking."}
+        sources.append("""SELECT 'credit_union' AS sector, cast(c.cu_number AS VARCHAR) AS institution_id, c.name, c.state, c.total_assets AS assets,
+            c.employees_fte_estimate AS employees_fte, c.employees_full_time, c.employees_part_time,
+            'estimated: full_time + 0.5 * part_time' AS employee_basis,
+            c.interest_income_ytd, c.interest_expense_ytd, c.non_interest_income_ytd AS noninterest_income_ytd,
+            EXISTS(SELECT 1 FROM cuq_panel q WHERE q.cu_number=c.cu_number AND left(q.quarter,4)=left(c.quarter,4)
+                   AND q.quarter<=c.quarter AND q.continuity_status NOT LIKE 'verified%') AS perimeter_break
+            FROM cu c WHERE c.quarter=?""")
+    if sector in ("both", "bank"):
+        if not (BANKQ_DIR / "bank-employees-v1.parquet").exists():
+            return {"error": "Reported bank employees panel unavailable; no partial cross-sector ranking returned."}
+        sources.append("""SELECT 'bank' AS sector, b.cert AS institution_id, b.name, b.state, b.assets,
+            e.employees_fte_reported AS employees_fte, NULL AS employees_full_time, NULL AS employees_part_time,
+            'reported FTE: FDIC NUMEMP' AS employee_basis,
+            b.interest_income_ytd, b.interest_expense_ytd, b.noninterest_income_ytd,
+            (b.quarter_income_disagreement OR EXISTS(SELECT 1 FROM bankm y WHERE y.cert=b.cert AND left(y.quarter,4)=left(b.quarter,4)
+                 AND y.quarter<=b.quarter AND (y.merger_event OR y.quarter_income_disagreement))) AS perimeter_break
+            FROM bankm b LEFT JOIN bank_employees e USING(quarter,cert) WHERE b.quarter=?""")
+    params=[qq]*len(sources);w="assets >= ?";params.append(min_assets)
+    if state:w+=" AND upper(state)=?";params.append(state)
+    rows=run("SELECT * FROM ("+" UNION ALL ".join(sources)+") x WHERE "+w,params)
+    for r in rows:
+        r['net_revenue_ytd']=None if any(r[x] is None for x in ('interest_income_ytd','interest_expense_ytd','noninterest_income_ytd')) else r['interest_income_ytd']-r['interest_expense_ytd']+r['noninterest_income_ytd']
+        r['gross_revenue_ytd']=None if any(r[x] is None for x in ('interest_income_ytd','noninterest_income_ytd')) else r['interest_income_ytd']+r['noninterest_income_ytd']
+        v=r[revenue_basis+'_revenue_ytd'];fte=r['employees_fte']
+        r['revenue_per_employee_annualized']=None if v is None or fte is None or fte<=0 or r['perimeter_break'] else v*ann/fte
+    valid=[r for r in rows if r['revenue_per_employee_annualized'] is not None]
+    valid.sort(key=lambda r:(-r['revenue_per_employee_annualized'],r['sector'],r['institution_id']))
+    vals=sorted(r['revenue_per_employee_annualized'] for r in valid)
+    median=(vals[(len(vals)-1)//2]+vals[len(vals)//2])/2 if vals else None
+    last=None;rank=0
+    for i,r in enumerate(valid):
+        if r['revenue_per_employee_annualized']!=last:rank=i+1;last=r['revenue_per_employee_annualized']
+        r['rank']=rank
+    selected=[r for r in valid if (cu_number is None or r['sector']=='credit_union' and r['institution_id']==str(cu_number)) and (cert is None or r['sector']=='bank' and r['institution_id']==str(cert))]
+    return {"quarter":qq,"state":state,"sector":sector,"revenue_basis":revenue_basis,"annualization_factor":ann,
+            "matching_institutions":len(rows),"ranked_institutions":len(valid),"excluded_missing_or_zero_or_perimeter_break":len(rows)-len(valid),
+            "source_vintage_note":"Income panel retains its existing October 19 vintage; employee counts were retrieved October 20. Publisher restatements can change comparisons.","peer_median_including_selected":median,"invalid_denominator_count":sum(r["employees_fte"] is None or r["employees_fte"]<=0 for r in rows),"known_perimeter_break_count":sum(bool(r["perimeter_break"]) for r in rows),"rows":selected[offset:offset+limit],
+            "pagination":{"has_more":offset+limit<len(selected),"next_offset":offset+limit if offset+limit<len(selected) else None},
+            "selected_not_ranked":bool((cu_number is not None or cert is not None) and not selected),"note":PRODUCTIVITY_NOTE}
 
 
 class RateLimit:
